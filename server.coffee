@@ -1,8 +1,9 @@
 Db = require 'db'
+Event = require 'event'
 Http = require 'http'
+Photo = require 'photo'
 Plugin = require 'plugin'
 Subscription = require 'subscription'
-Event = require 'event'
 
 exports.client_searchSub = (cb) !->
 	cb.subscribe 'search:'+Plugin.userId()
@@ -16,8 +17,12 @@ exports.client_search = (text) !->
 
 exports.client_add = (text) !->
 	if typeof text is 'object'
-		addTopic Plugin.userId(), text
-	else if (text.indexOf('http:') is 0 or text.indexOf('www.') is 0) and text.split(' ').length is 1
+		if text.photoguid
+			text.by = Plugin.userId()
+			Photo.claim text.photoguid, text
+		else
+			addTopic Plugin.userId(), text
+	else if (text.toLowerCase().indexOf('http') is 0 or text.toLowerCase().indexOf('www.') is 0) and text.split(' ').length is 1
 		Http.get
 			url: text
 			getMetaTags: true
@@ -26,22 +31,35 @@ exports.client_add = (text) !->
 	else
 		addTopic Plugin.userId(), title: text
 
+exports.onPhoto = (info, data) !->
+	#log 'info > ' + JSON.stringify(info)
+	#log 'data > ' + JSON.stringify(data)
+	if info.key and data.by
+		data.photo = info.key
+		addTopic data.by, data
+
 exports.httpSearch = (userId, data) !->
-	log 'pushing data', JSON.stringify(data)
 	Subscription.push 'search:'+userId, data
 
 exports.httpTags = (userId, data) !->
-	log 'got tags data', data.title, data.description, data.image, data.url
-	addTopic userId, data
+	if !data.url
+		# url was probably malformed, just add as title
+		addTopic userId, title: data.title
+	else
+		addTopic userId, data
 
 addTopic = (userId, data) !->
 	topic =
 		title: data.title
-		image: data.image
 		description: data.description||''
 		url: data.url
 		time: 0|(new Date()/1000)
 		by: userId
+
+	if data.image
+		topic.image = data.image
+	else if data.photo
+		topic.photo = data.photo
 
 	maxId = Db.shared.incr('maxId')
 	Db.shared.set(maxId, topic)
