@@ -1,4 +1,3 @@
-name: Forum
-description: Share and discuss movies, music, books, etc...
-icon: note
+name: Board
+description: Share and discuss articles, opinions, movies, music, books, etc
 api: 2

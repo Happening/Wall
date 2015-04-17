@@ -19,7 +19,7 @@ exports.render = !->
 	if topicId
 		renderTopic(topicId)
 	else
-		renderForum()
+		renderBoard()
 
 
 renderTopic = (topicId) !->
@@ -34,6 +34,7 @@ renderTopic = (topicId) !->
 					Server.sync 'remove', topicId, !->
 						Db.shared.remove(topicId)
 					Page.back()
+
 	Dom.div !->
 		Dom.style margin: '-8px -8px 0', paddingBottom: '8px', backgroundColor: '#f8f8f8', borderBottom: '2px solid #ccc'
 
@@ -41,10 +42,10 @@ renderTopic = (topicId) !->
 			Dom.style Box: 'top', Flex: 1, padding: '8px'
 
 			imgUrl = false
-			if image = topic.get('image')
-				imgUrl = image
-			else if key = topic.get('photo')
+			if (key = topic.get 'imageThumb') or (key = topic.get 'photo')
 				imgUrl = Photo.url key, 400
+			else if image = topic.get('image')
+				imgUrl = image
 
 			if imgUrl
 				Dom.img !->
@@ -54,14 +55,22 @@ renderTopic = (topicId) !->
 						margin: '2px 8px 4px 2px'
 					Dom.prop 'src', imgUrl
 
+			url = topic.get('url')
 			Dom.div !->
 				Dom.style Flex: 1, fontSize: '90%'
 				Dom.h3 !->
 					Dom.style marginTop: 0
-					Dom.text topic.get('title')
-				Dom.text topic.get('description')
+					if url
+						Dom.text topic.get('title')
+					else
+						Dom.userText topic.get('title')
 
-				if url = topic.get('url')
+				if url
+					Dom.text topic.get('description')
+				else
+					Dom.userText topic.get('description')
+
+				if url
 					domain = url.match(/(^https?:\/\/)?([^\/]+)/)[2].split('.').slice(-2).join('.')
 					Dom.div !->
 						Dom.style
@@ -73,9 +82,20 @@ renderTopic = (topicId) !->
 							fontWeight: 'normal'
 						Dom.text domain
 
-			if url = topic.get('url')
+			photoKey = topic.get('photo')
+			if url or photoKey # tap either opens the url, or shows the photo
 				Dom.onTap !->
-					Plugin.openUrl url
+					if url
+						Plugin.openUrl url
+					else if photoKey
+						Page.nav !->
+							Page.setTitle tr("Topic photo")
+							Dom.style
+								padding: 0
+								backgroundColor: '#444'
+							require('photoview').render
+								key: photoKey
+
 
 		expanded = Obs.create false
 		byUserId = topic.get('by')
@@ -99,7 +119,6 @@ renderTopic = (topicId) !->
 			if expanded.get()
 				Dom.div !->
 					Dom.style margin: '0 8px 0 8px'
-
 					Social.renderLikeNames
 						path: [topicId]
 						id: 'topic'
@@ -109,7 +128,7 @@ renderTopic = (topicId) !->
 		Dom.style margin: '0 -8px'
 		Social.renderComments(topicId)
 
-renderForum = !->
+renderBoard = !->
 	addingTopic = Obs.create 0
 	Ui.list !->
 		searchResult = Obs.create false
@@ -123,7 +142,6 @@ renderForum = !->
 		addingUrl = Obs.create false
 		editingInput = Obs.create false
 
-
 		search = !->
 			return if !(val = addE.value().trim())
 			searching.set true
@@ -133,13 +151,23 @@ renderForum = !->
 
 		save = !->
 			return if !(val = addE.value().trim())
+
+			newId = 0|Db.shared.get('maxId')+1
+
 			if addingUrl.get()
-				addingTopic.set 0|Db.shared.get('maxId')+1
+				addingTopic.set newId
+				Event.subscribe [newId] # TODO: subscribe serverside
 				Server.sync 'add', val
 			else
 				Page.nav !->
 					Page.setTitle tr("New topic")
 					Form.setPageSubmit (values) !->
+						values.title = Form.smileyToEmoji values.title.trim()
+						values.description = Form.smileyToEmoji values.description.trim()
+						if !values.title or !values.description
+							Modal.show tr("Please enter both a title and a description")
+							return
+						Event.subscribe [newId] # TODO: subscribe serverside
 						Server.call 'add', values
 						Page.back()
 					, true
@@ -160,13 +188,11 @@ renderForum = !->
 								height: '75px'
 								margin: '20px 10px 0 0'
 							photo = Photo.unclaimed 'topicPhoto'
-							log 'photo', photo
 							if photo
 								photoForm.value photo.claim()
 								photoThumb.set photo.thumb
 
 							if pt = photoThumb.get()
-								log 'got thumb', pt
 								Dom.style border: 'none', background: 'none'
 								Dom.img !->
 									Dom.style
@@ -200,13 +226,13 @@ renderForum = !->
 			Form.blur()
 
 
-		# Top entry: adding an topic
+		# Top entry: adding a topic
 		Ui.item !->
 			Dom.style padding: '8px 4px'
 			addE = Form.text
 				simple: true
 				name: 'topic'
-				text: tr("+ Enter title, keywords or url")
+				text: tr("+ Enter title, url, or search the web")
 				onChange: (v) !->
 					v = v?.trim()||''
 					if v
@@ -216,6 +242,7 @@ renderForum = !->
 					else
 						editingInput.set false
 						searchResult.set false
+						searchLast.set false
 						addingUrl.set false
 				onReturn: save
 				inScope: !->
@@ -225,6 +252,17 @@ renderForum = !->
 						fontSize: '100%'
 						border: 'none'
 					Dom.prop 'rows', 1
+				onContent: (content) !->
+					urls = []
+					text = content
+						.replace /([^\w\/]|^)www\./ig, '$1http://www.'
+						.replace /\bhttps?:\/\/([a-z0-9\.\-]+\.[a-z]+)([/:][^\s\)'",<]*)?/ig, (url) ->
+							if url[-1..] in ['.','!','?']
+								# dropping the ? is questionable
+								url = url[0...-1]
+							urls.push url
+					addE.value (if urls.length is 1 then urls[0] else content)
+						# if it's one url in text, we'll only share the url
 
 		Obs.observe !->
 			if editingInput.get() and !searching.get()
@@ -255,7 +293,7 @@ renderForum = !->
 
 		Obs.observe !->
 			results = searchResult.get()
-			log 'got some results', results
+			#log 'got some results', results
 			if results
 				for result in results then do (result) !->
 					topic = Obs.create result
@@ -267,7 +305,13 @@ renderForum = !->
 								desc = result.description || ''
 								Dom.text desc.slice(0, 120) + (if desc.length>120 then '...' else '')
 						Dom.onTap !->
-							Server.sync 'add', result
+							newId = 0|Db.shared.get('maxId')+1
+							addingTopic.set newId
+							Event.subscribe [newId] # TODO: subscribe serverside
+							log 'passing back result url: '+result.url
+							Server.sync 'add', result.url
+								# we should have OG caching in the future, so for now we 
+								# just requery the search result url for OG tags
 							searching.set false
 							searchResult.set false
 							addE.value ""
@@ -359,12 +403,11 @@ renderForum = !->
 				[newTime, unreadCount, -topic.key()]
 
 		Obs.observe !->
-			log 'empty now', empty.get()
 			if empty.get()
 				Ui.item !->
 					Dom.style
 						padding: '12px 0'
-						textAlign: 'center'
+						Box: 'middle center'
 						color: '#bbb'
 					Dom.text tr("No topics")
 
@@ -377,10 +420,10 @@ renderListTopic = (topic, searchResult, bottomContent) !->
 			height: '50px'
 
 		bgUrl = false
-		if image = topic.get('image')
+		if (key = topic.get 'imageThumb') or (key = topic.get 'photo')
+			bgUrl = Photo.url key, 200
+		else if image = topic.get('image') # legacy topics without a thumb
 			bgUrl = image
-		else if key = topic.get('photo')
-			bgUrl = Photo.url key, 400
 
 		if bgUrl
 			Dom.style
@@ -388,8 +431,7 @@ renderListTopic = (topic, searchResult, bottomContent) !->
 				backgroundSize: 'cover'
 				backgroundPosition: '50% 50%'
 		else
-			Dom.style
-				backgroundColor: '#eee'
+			Icon.render data: 'placeholder', color: '#ddd', size: 48
 
 	Dom.div !->
 		Dom.style Flex: 1, color: (if Event.isNew(topic.get('time')) then '#5b0' else 'inherit')
@@ -400,10 +442,14 @@ renderListTopic = (topic, searchResult, bottomContent) !->
 
 			Dom.div !->
 				Dom.style Flex: 1
+				url = topic.get('url')
 				Dom.span !->
 					Dom.style paddingRight: '6px'
-					Dom.userText topic.get('title')
-				if (url = topic.get('url')) and searchResult
+					if url
+						Dom.text topic.get('title')
+					else
+						Dom.userText topic.get('title')
+				if url and searchResult
 					domain = url.match(/(^https?:\/\/)?([^\/]+)/)[2].split('.').slice(-2).join('.')
 					Dom.span !->
 						Dom.style

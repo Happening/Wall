@@ -21,12 +21,13 @@ exports.client_add = (text) !->
 			text.by = Plugin.userId()
 			Photo.claim text.photoguid, text
 		else
-			addTopic Plugin.userId(), text
+			addTopic Plugin.userId(), text # not used for search results anymore
 	else if (text.toLowerCase().indexOf('http') is 0 or text.toLowerCase().indexOf('www.') is 0) and text.split(' ').length is 1
 		Http.get
 			url: text
 			getMetaTags: true
 			name: 'httpTags'
+			memberId: Plugin.userId()
 			args: [Plugin.userId()]
 	else
 		addTopic Plugin.userId(), title: text
@@ -42,6 +43,7 @@ exports.httpSearch = (userId, data) !->
 	Subscription.push 'search:'+userId, data
 
 exports.httpTags = (userId, data) !->
+	#log 'httpTags received: '+JSON.stringify(data)
 	if !data.url
 		# url was probably malformed, just add as title
 		addTopic userId, title: data.title
@@ -58,7 +60,9 @@ addTopic = (userId, data) !->
 
 	if data.image
 		topic.image = data.image
-	else if data.photo
+	if data.imageThumb
+		topic.imageThumb = data.imageThumb
+	if data.photo
 		topic.photo = data.photo
 
 	maxId = Db.shared.incr('maxId')
