@@ -152,7 +152,7 @@ renderBoard = !->
 		save = !->
 			return if !(val = addE.value().trim())
 
-			newId = 0|Db.shared.get('maxId')+1
+			newId = (0|Db.shared.get('maxId'))+1
 
 			if addingUrl.get()
 				addingTopic.set newId
@@ -305,7 +305,7 @@ renderBoard = !->
 								desc = result.description || ''
 								Dom.text desc.slice(0, 120) + (if desc.length>120 then '...' else '')
 						Dom.onTap !->
-							newId = 0|Db.shared.get('maxId')+1
+							newId = (0|Db.shared.get('maxId'))+1
 							addingTopic.set newId
 							Event.subscribe [newId] # TODO: subscribe serverside
 							log 'passing back result url: '+result.url
@@ -327,7 +327,7 @@ renderBoard = !->
 
 	Ui.list !->
 		Obs.observe !->
-			maxId = Db.shared.get 'maxId'
+			maxId = 0|Db.shared.get 'maxId'
 			if addingTopic.get()>maxId
 				Ui.item !->
 					Dom.style padding: '8px 4px', color: '#aaa'
@@ -409,7 +409,7 @@ renderBoard = !->
 						padding: '12px 0'
 						Box: 'middle center'
 						color: '#bbb'
-					Dom.text tr("No topics")
+					Dom.text tr("Nothing has been added yet")
 
 
 renderListTopic = (topic, searchResult, bottomContent) !->
@@ -465,3 +465,11 @@ renderListTopic = (topic, searchResult, bottomContent) !->
 
 
 		bottomContent() if bottomContent
+
+
+if !Db.shared
+	exports.renderSettings = !->
+		Dom.div !->
+			Form.input
+				name: '_title'
+				text: tr("Board title (optional)")

@@ -5,6 +5,8 @@ Photo = require 'photo'
 Plugin = require 'plugin'
 Subscription = require 'subscription'
 
+exports.getTitle = -> # we implemented our own title input
+
 exports.client_searchSub = (cb) !->
 	cb.subscribe 'search:'+Plugin.userId()
 
