@@ -12,65 +12,71 @@ Server = require 'server'
 Social = require 'social'
 Time = require 'time'
 Ui = require 'ui'
+Util = require 'util'
 {tr} = require 'i18n'
 
 exports.render = !->
-	topicId = Page.state.get(0)
-	if topicId
-		renderTopic(topicId)
+	if postId = Page.state.get(0)
+		renderPost postId, !!Page.state.get('focus')
 	else
-		renderBoard()
+		renderWall()
 
 
-renderTopic = (topicId) !->
-	Page.setTitle tr("Topic")
-	topic = Db.shared.ref(topicId)
-	Event.showStar topic.get('title')
-	if Plugin.userId() is topic.get('by') or Plugin.userIsAdmin()
+renderPost = (postId, startFocused = false) !->
+	Page.setTitle tr("Post")
+	post = Db.shared.ref(postId)
+	Event.showStar post.get('title')
+	if Plugin.userId() is post.get('by') or Plugin.userIsAdmin()
 		Page.setActions
 			icon: 'trash'
 			action: !->
-				Modal.confirm null, tr("Remove topic?"), !->
-					Server.sync 'remove', topicId, !->
-						Db.shared.remove(topicId)
+				Modal.confirm null, tr("Remove post?"), !->
+					Server.sync 'remove', postId, !->
+						Db.shared.remove(postId)
 					Page.back()
 
 	Dom.div !->
-		Dom.style margin: '-8px -8px 0', paddingBottom: '8px', backgroundColor: '#f8f8f8', borderBottom: '2px solid #ccc'
+		Dom.style margin: '-16px -8px 0', padding: '8px 0', backgroundColor: '#f8f8f8', borderBottom: '2px solid #ccc'
 
-		Dom.div !->
-			Dom.style Box: 'top', Flex: 1, padding: '8px'
+		url = post.get('url')
+		imgUrl = false
+		if key = post.get('imageThumb')
+			imgUrl = Photo.url key, 400
+		else if image = post.get('image')
+			imgUrl = image
 
-			imgUrl = false
-			if (key = topic.get 'imageThumb') or (key = topic.get 'photo')
-				imgUrl = Photo.url key, 400
-			else if image = topic.get('image')
-				imgUrl = image
-
-			if imgUrl
-				Dom.img !->
-					Dom.style
-						maxWidth: '120px'
-						maxHeight: '200px'
-						margin: '2px 8px 4px 2px'
-					Dom.prop 'src', imgUrl
-
-			url = topic.get('url')
+		if !url and key = post.get('photo')
+			require('photoview').render
+				key: key
+		else if url
 			Dom.div !->
-				Dom.style Flex: 1, fontSize: '90%'
-				Dom.h3 !->
-					Dom.style marginTop: 0
-					if url
-						Dom.text topic.get('title')
-					else
-						Dom.userText topic.get('title')
+				Dom.style
+					Box: 'top'
+					Flex: 1
+					padding: '8px'
+					margin: '8px 8px 4px 8px'
+					backgroundColor: '#fff'
+					border: '1px solid #eee'
+					borderBottom: '2px solid #eee'
+					borderRadius: '2px'
+				Dom.cls 'link-box'
 
-				if url
-					Dom.text topic.get('description')
-				else
-					Dom.userText topic.get('description')
+				if imgUrl
+					Dom.img !->
+						Dom.style
+							maxWidth: '120px'
+							maxHeight: '200px'
+							margin: '2px 8px 4px 2px'
+						Dom.prop 'src', imgUrl
 
-				if url
+				Dom.div !->
+					Dom.style Flex: 1, fontSize: '90%'
+					Dom.h3 !->
+						Dom.style marginTop: 0
+						Dom.text post.get('title')
+
+					Dom.text post.get('description')
+
 					domain = url.match(/(^https?:\/\/)?([^\/]+)/)[2].split('.').slice(-2).join('.')
 					Dom.div !->
 						Dom.style
@@ -82,253 +88,165 @@ renderTopic = (topicId) !->
 							fontWeight: 'normal'
 						Dom.text domain
 
-			photoKey = topic.get('photo')
-			if url or photoKey # tap either opens the url, or shows the photo
 				Dom.onTap !->
-					if url
-						Plugin.openUrl url
-					else if photoKey
-						Page.nav !->
-							Page.setTitle tr("Topic photo")
-							Dom.style
-								padding: 0
-								backgroundColor: '#444'
-							require('photoview').render
-								key: photoKey
+					Plugin.openUrl url
+
+		if text = post.get('text')
+			Dom.div !->
+				Dom.style padding: '8px 8px 0 8px'
+				Dom.userText text
 
 
 		expanded = Obs.create false
-		byUserId = topic.get('by')
+		byUserId = post.get('by')
 		Dom.div !->
 			Dom.style
-				margin: '4px 8px 0 8px'
+				padding: '8px 8px 0 8px'
 				fontSize: '70%'
 				color: '#aaa'
-			Dom.text tr("Added by %1", Plugin.userName(byUserId))
+			Dom.text tr("Posted by %1", Plugin.userName(byUserId))
 			Dom.text " • "
-			Time.deltaText topic.get('time')
+			Time.deltaText post.get('time')
 
 			Dom.text " • "
 			expanded = Social.renderLike
-				path: [topicId]
-				id: 'topic'
+				path: [postId]
+				id: 'post'
 				userId: byUserId
-				aboutWhat: tr("topic")
+				aboutWhat: tr("post")
 
 		Obs.observe !->
 			if expanded.get()
 				Dom.div !->
 					Dom.style margin: '0 8px 0 8px'
 					Social.renderLikeNames
-						path: [topicId]
-						id: 'topic'
+						path: [postId]
+						id: 'post'
 						userId: byUserId
 
 	Dom.div !->
 		Dom.style margin: '0 -8px'
-		Social.renderComments(topicId)
+		Social.renderComments
+			path: [postId]
+			startFocused: startFocused
 
-renderBoard = !->
-	addingTopic = Obs.create 0
+renderWall = !->
+	addingPost = Obs.create 0
 	Ui.list !->
-		searchResult = Obs.create false
-		searchLast = Obs.create false
-		searching = Obs.create false
-		Server.send "searchSub", (result) !->
-			searching.set false
-			searchResult.set result
-
 		addE = null
+		unclaimedPhoto = false
+		photoThumb = Obs.create false
+
 		addingUrl = Obs.create false
 		editingInput = Obs.create false
 
-		search = !->
-			return if !(val = addE.value().trim())
-			searching.set true
-			searchResult.set false
-			searchLast.set val
-			Server.send 'search', val
-
 		save = !->
-			return if !(val = addE.value().trim())
+			photoguid = if unclaimedPhoto then unclaimedPhoto.claim() else false
+			return if !(val = addE.value().trim()) and !photoguid
 
 			newId = (0|Db.shared.get('maxId'))+1
+			Event.subscribe [newId] # TODO: subscribe serverside
+			addingPost.set newId
 
-			if addingUrl.get()
-				addingTopic.set newId
-				Event.subscribe [newId] # TODO: subscribe serverside
-				Server.sync 'add', val
+			if photoguid
+				text = Form.smileyToEmoji val
+				Server.sync 'add',
+					text: text
+					photoguid: photoguid
 			else
-				Page.nav !->
-					Page.setTitle tr("New topic")
-					Form.setPageSubmit (values) !->
-						values.title = Form.smileyToEmoji values.title.trim()
-						values.description = Form.smileyToEmoji values.description.trim()
-						if !values.title or !values.description
-							Modal.show tr("Please enter both a title and a description")
-							return
-						Event.subscribe [newId] # TODO: subscribe serverside
-						Server.call 'add', values
-						Page.back()
-					, true
+				if !addingUrl.get()
+					val = Form.smileyToEmoji val
+				Server.sync 'add', val # val is only the text
 
-					photoForm = Form.hidden 'photoguid'
-					photoThumb = Obs.create false
-
-					Dom.div !->
-						Dom.style
-							Box: true
-							padding: '8px'
-							margin: '-8px'
-							backgroundColor: '#fff'
-							borderBottom: '2px solid #ddd'
-						Dom.div !->
-							Dom.style
-								width: '75px'
-								height: '75px'
-								margin: '20px 10px 0 0'
-							photo = Photo.unclaimed 'topicPhoto'
-							if photo
-								photoForm.value photo.claim()
-								photoThumb.set photo.thumb
-
-							if pt = photoThumb.get()
-								Dom.style border: 'none', background: 'none'
-								Dom.img !->
-									Dom.style
-										display: 'block'
-										width: '75px'
-										maxHeight: '125px'
-									Dom.prop 'src', pt
-							else
-								Dom.style
-									border: '2px dashed #bbb'
-									boxSizing: 'border-box'
-									background:  "url(#{Plugin.resourceUri('addphoto.png')}) 50% 50% no-repeat"
-									backgroundSize: '32px'
-
-							Dom.onTap !->
-								Photo.pick null, null, 'topicPhoto'
-
-						Dom.div !->
-							Dom.style Flex: 1
-							Form.input
-								name: 'title'
-								value: val
-								text: tr("Title")
-							Form.text
-								name: 'description'
-								text: tr("Description")
-
-
+			photoThumb.set null
 			addE.value ""
 			editingInput.set false
 			Form.blur()
 
 
-		# Top entry: adding a topic
+		# Top entry: adding a post
 		Ui.item !->
-			Dom.style padding: '8px 4px'
-			addE = Form.text
-				simple: true
-				name: 'topic'
-				text: tr("+ Enter title, url, or search the web")
-				onChange: (v) !->
-					v = v?.trim()||''
-					if v
-						editingInput.set v
-						isUrl = v.split(' ').length is 1 and (v.toLowerCase().indexOf('http') is 0 or v.toLowerCase().indexOf('www.') is 0)
-						addingUrl.set !!isUrl
-					else
-						editingInput.set false
-						searchResult.set false
-						searchLast.set false
-						addingUrl.set false
-				onReturn: save
-				inScope: !->
-					Dom.style
-						Flex: 1
-						display: 'block'
-						fontSize: '100%'
-						border: 'none'
-					Dom.prop 'rows', 1
-				onContent: (content) !->
-					urls = []
-					text = content
-						.replace /([^\w\/]|^)www\./ig, '$1http://www.'
-						.replace /\bhttps?:\/\/([a-z0-9\.\-]+\.[a-z]+)([/:][^\s\)'",<]*)?/ig, (url) ->
-							if url[-1..] in ['.','!','?']
-								# dropping the ? is questionable
-								url = url[0...-1]
-							urls.push url
-					addE.value (if urls.length is 1 then urls[0] else content)
-						# if it's one url in text, we'll only share the url
+			Dom.style Box: false, padding: 0
 
-		Obs.observe !->
-			if editingInput.get() and !searching.get()
-				Ui.item !->
-					Dom.style padding: '8px 4px', color: Plugin.colors().highlight
-					Icon.render
-						data: 'edit'
-						size: 18
-						color: Plugin.colors().highlight
-						style:
-							padding: '0 16px'
-							marginRight: '10px'
-					Dom.div (if addingUrl.get() then tr("Add URL") else tr("Create new topic"))
-					Dom.onTap save
+			Dom.div !->
+				Dom.style Box: 'top'
 
-				if editingInput.get() isnt searchLast.get()
-					Ui.item !->
-						Dom.style padding: '8px 4px', color: Plugin.colors().highlight
-						Icon.render
-							data: 'world'
-							size: 18
-							color: Plugin.colors().highlight
-							style:
-								padding: '0 16px'
-								marginRight: '10px'
-						Dom.div tr("Show web suggestions")
-						Dom.onTap search
+				unclaimedPhoto = Photo.unclaimed 'postPhoto'
+				if unclaimedPhoto
+					photoThumb.set unclaimedPhoto.thumb
 
-		Obs.observe !->
-			results = searchResult.get()
-			#log 'got some results', results
-			if results
-				for result in results then do (result) !->
-					topic = Obs.create result
-					Ui.item !->
-						Dom.style padding: '8px 4px'
-						renderListTopic topic, true, !->
-							Dom.div !->
-								Dom.style color: '#aaa', fontSize: '75%', marginTop: '6px'
-								desc = result.description || ''
-								Dom.text desc.slice(0, 120) + (if desc.length>120 then '...' else '')
+				if pt = photoThumb.get()
+					Dom.div !->
+						Dom.style
+							width: '80px'
+							height: '80px'
+							margin: '0 8px 8px 0'
+							backgroundImage: "url(#{pt})"
+							backgroundSize: 'cover'
+							backgroundPosition: '50% 50%'
 						Dom.onTap !->
-							newId = (0|Db.shared.get('maxId'))+1
-							addingTopic.set newId
-							Event.subscribe [newId] # TODO: subscribe serverside
-							log 'passing back result url: '+result.url
-							Server.sync 'add', result.url
-								# we should have OG caching in the future, so for now we 
-								# just requery the search result url for OG tags
-							searching.set false
-							searchResult.set false
-							addE.value ""
+							Modal.confirm tr("Remove photo?"), !->
+								unclaimedPhoto.discard()
+								photoThumb.set null
+
+				addE = Form.text
+					simple: true
+					name: 'post'
+					text: tr("What's happening?")
+					rows: 3
+					onChange: (v) !->
+						v = v?.trim()||''
+						if v
+							editingInput.set v
+							isUrl = v.split(' ').length is 1 and (v.toLowerCase().indexOf('http') is 0 or v.toLowerCase().indexOf('www.') is 0)
+							addingUrl.set !!isUrl
+						else
 							editingInput.set false
-							Form.blur()
-			else if searching.get()
+							addingUrl.set false
+					inScope: !->
+						Dom.style
+							Flex: 1
+							display: 'block'
+							fontSize: '100%'
+							border: 'none'
+							width: '100%'
+					onContent: (content) !->
+						urls = Util.getUrlsFromText content
+						addE.value (if urls.length is 1 then urls[0] else content)
+							# if it's one url in text, we'll only share the url
+
+				Obs.onClean !->
+					if unclaimedPhoto
+						unclaimedPhoto.discard()
+
+			Dom.div !->
+				Dom.style
+					Box: 'middle'
+					backgroundColor: '#f8f8f8'
+					borderTop: '1px solid #ddd'
+					margin: '0 -8px -8px -8px'
+					padding: '4px'
+
 				Dom.div !->
-					Dom.style
-						Box: 'center'
-						margin: '40px'
-					Ui.spinner 24
+					Dom.style Flex: 1
+					if !photoThumb.get()
+						Icon.render
+							style:
+								padding: '8px'
+							data: 'camera'
+							color: '#aaa'
+							onTap: !->
+								Photo.pick null, null, 'postPhoto'
+
+				Ui.button !->
+					Dom.text (if addingUrl.get() and !photoThumb.get() then tr("Post URL") else tr("Post"))
+				, save
 
 
-	Ui.list !->
+	Dom.div !->
 		Obs.observe !->
 			maxId = 0|Db.shared.get 'maxId'
-			if addingTopic.get()>maxId
+			if addingPost.get()>maxId
 				Ui.item !->
 					Dom.style padding: '8px 4px', color: '#aaa'
 					Dom.div !->
@@ -343,64 +261,28 @@ renderBoard = !->
 		count = 0
 		empty = Obs.create(true)
 
-		# List of all topics
-		Db.shared.iterate (topic) !->
+		# List of all posts
+		Db.shared.iterate (post) !->
 			empty.set(!++count)
 			Obs.onClean !->
 				empty.set(!--count)
 
-			Ui.item !->
-				Dom.style
-					padding: '8px 4px'
-					Box: 'middle'
+			Dom.section !->
+				Dom.style padding: '8px'
+				if !post.get('url')
+					Dom.cls 'main-box'
 
-				renderListTopic topic, false, !->
-					Dom.div !->
-						Dom.style
-							Box: true
-							margin: '4px 0'
-							fontSize: '70%'
-							color: '#aaa'
-						Dom.div !->
-							Dom.text Plugin.userName(topic.get('by'))
-							Dom.text " • "
-							Time.deltaText topic.get('time'), 'short'
-
-						Dom.div !->
-							Dom.style Flex: 1, textAlign: 'right', fontWeight: 'bold', marginTop: '1px', paddingRight: '2px'
-
-							if commentCnt = Db.shared.get('comments', topic.key(), 'max')
-								Dom.span !->
-									Dom.style display: 'inline-block', padding: '5px 0 5px 8px', margin: '-7px -3px'
-									Icon.render
-										data: 'comments'
-										size: 13
-										color: '#aaa'
-										style: {verticalAlign: 'bottom', margin: '1px 2px 0 1px'}
-									Dom.span commentCnt
-
-							likeCnt = 0
-							likeCnt++ for k,v of Db.shared.get('likes', topic.key()+'-topic') when +k and v>0
-							if likeCnt
-								Dom.span !->
-									Dom.style display: 'inline-block', padding: '5px 0 5px 10px', margin: '-7px -3px'
-									Icon.render
-										data: 'thumbup'
-										size: 13
-										color: '#aaa'
-										style: {verticalAlign: 'bottom', margin: '0 2px 1px 1px'}
-									Dom.span likeCnt
-
+				renderListPost post
 
 				Dom.onTap !->
-					Page.nav topic.key()
+					Page.nav post.key()
 
 
-		, (topic) ->
-			if +topic.key()
-				newTime = if Event.isNew(topic.get('time')) then -topic.get('time') else 0
-				unreadCount = -Event.getUnread([topic.key()])
-				[newTime, unreadCount, -topic.key()]
+		, (post) ->
+			if +post.key()
+				createTime = post.get('time')
+				orderTime = Event.getOrder([post.key()])
+				-Math.max(createTime, orderTime)
 
 		Obs.observe !->
 			if empty.get()
@@ -409,67 +291,104 @@ renderBoard = !->
 						padding: '12px 0'
 						Box: 'middle center'
 						color: '#bbb'
-					Dom.text tr("Nothing has been added yet")
+					Dom.text tr("Nothing has been posted yet")
 
 
-renderListTopic = (topic, searchResult, bottomContent) !->
+renderListPost = (post) !->
+	url = post.get('url')
+
 	Dom.div !->
-		Dom.style
-			margin: '0 10px 0 0'
-			width: '50px'
-			height: '50px'
+		Dom.style Box: 'top', margin: '-8px', padding: '8px'
 
 		bgUrl = false
-		if (key = topic.get 'imageThumb') or (key = topic.get 'photo')
+		showLarge = false
+		if key = post.get 'imageThumb'
 			bgUrl = Photo.url key, 200
-		else if image = topic.get('image') # legacy topics without a thumb
-			bgUrl = image
-
+		else if key = post.get 'photo'
+			bgUrl = Photo.url key, 400
+			showLarge = true
+		
 		if bgUrl
-			Dom.style
-				backgroundImage: "url(#{bgUrl})"
-				backgroundSize: 'cover'
-				backgroundPosition: '50% 50%'
-		else
-			Icon.render data: 'placeholder', color: '#ddd', size: 48
-
-	Dom.div !->
-		Dom.style Flex: 1, color: (if Event.isNew(topic.get('time')) then '#5b0' else 'inherit')
-		Dom.div !->
-			Dom.style Box: true
-			if !searchResult
-				Dom.style minHeight: '30px'
-
 			Dom.div !->
-				Dom.style Flex: 1
-				url = topic.get('url')
-				Dom.span !->
-					Dom.style paddingRight: '6px'
-					if url
-						Dom.text topic.get('title')
-					else
-						Dom.userText topic.get('title')
-				if url and searchResult
-					domain = url.match(/(^https?:\/\/)?([^\/]+)/)[2].split('.').slice(-2).join('.')
+				Dom.style
+					margin: '0 10px 0 0'
+					width: (if showLarge then 120 else 50)+'px'
+					height: (if showLarge then 80 else 50)+'px'
+					backgroundImage: "url(#{bgUrl})"
+					backgroundSize: 'cover'
+					backgroundPosition: '50% 50%'
+
+		Dom.div !->
+			Dom.style Flex: 1
+			Dom.div !->
+				Dom.style Box: true
+				mh = if showLarge then 60 else (if !url then 0 else 30)
+				Dom.style minHeight: mh+'px', marginTop: '2px'
+
+				Dom.div !->
+					Dom.style Flex: 1, marginRight: '6px'
 					Dom.span !->
-						Dom.style
-							color: '#aaa'
-							textTransform: 'uppercase'
-							fontSize: '70%'
-							fontWeight: 'normal'
-						Dom.text ' '+domain
+						if url
+							Dom.style color: '#888', fontWeight: 'bold', fontSize: '85%'
+							Dom.text post.get('title')
+						else
+							text = post.get('text')||''
+							text = text.replace(/\n/g, ' ') # think of something more appropriate for this
+							Dom.userText text
+
+				Dom.div !->
+					Dom.style Box: 'middle', marginRight: '-6px'
+					Event.renderBubble [post.key()]
 
 			Dom.div !->
-				Dom.style Box: 'middle', marginRight: '-6px'
-				Event.renderBubble [topic.key()]
+				Dom.style
+					Box: true
+					marginTop: '4px'
+					fontSize: '70%'
+					color: '#aaa'
+				Dom.div !->
+					Dom.span !->
+						Dom.style color: (if Event.isNew(post.get('time')) then '#5b0' else 'inherit')
+						Dom.text Plugin.userName(post.get('by'))
+					Dom.text " • "
+					Time.deltaText post.get('time'), 'short'
 
+				Dom.div !->
+					Dom.style Flex: 1, textAlign: 'right', fontWeight: 'bold', marginTop: '1px', paddingRight: '2px'
 
-		bottomContent() if bottomContent
+					if commentCnt = Db.shared.get('comments', post.key(), 'max')
+						Dom.span !->
+							Dom.style display: 'inline-block', padding: '5px 0 5px 8px', margin: '-7px -3px'
+							Icon.render
+								data: 'comments'
+								size: 13
+								color: '#aaa'
+								style: {verticalAlign: 'bottom', margin: '1px 2px 0 1px'}
+							Dom.span commentCnt
 
+					likeCnt = 0
+					likeCnt++ for k,v of Db.shared.get('likes', post.key()+'-post') when +k and v>0
+					if likeCnt
+						Dom.span !->
+							Dom.style display: 'inline-block', padding: '5px 0 5px 10px', margin: '-7px -3px'
+							Icon.render
+								data: 'thumbup'
+								size: 13
+								color: '#aaa'
+								style: {verticalAlign: 'bottom', margin: '0 2px 1px 1px'}
+							Dom.span likeCnt
 
-if !Db.shared
-	exports.renderSettings = !->
+	if url and (text = post.get('text'))
 		Dom.div !->
-			Form.input
-				name: '_title'
-				text: tr("Board title (optional)")
+			Dom.style margin: '8px -8px -8px -8px', padding: '8px', backgroundColor: '#F8F8F8', borderTop: '1px solid #ddd'
+			Dom.cls 'link-box'
+			Dom.userText text
+			Dom.onTap !-> Page.nav
+				0: post.key()
+				focus: true
+
+Dom.css
+	'.main-box':
+		backgroundColor: '#f8f8f8'
+	'.link-box.tap, .main-box.tap':
+		background: 'rgba(0, 0, 0, 0.1) !important'

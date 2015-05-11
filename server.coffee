@@ -4,77 +4,92 @@ Http = require 'http'
 Photo = require 'photo'
 Plugin = require 'plugin'
 Subscription = require 'subscription'
+Util = require 'util'
 
 exports.getTitle = -> # we implemented our own title input
 
-exports.client_searchSub = (cb) !->
-	cb.subscribe 'search:'+Plugin.userId()
+exports.client_add = (data) !->
+	#log '_add', JSON.stringify(data)
+	if typeof data is 'string'
+		text = data.trim()
 
-exports.client_search = (text) !->
-	Http.get
-		query: text
-		searchYahoo: true
-		name: 'httpSearch'
-		args: [Plugin.userId()]
+		# see if there are any urls
+		urls = Util.getUrlsFromText text
+		url = null
+		if urls.length is 1
+			if text.split(' ').length is 1
+				# share only the url, no text
+				url = text
+				text = null
+			else
+				# share the first url, but also the original text
+				url = urls[0]
 
-exports.client_add = (text) !->
-	if typeof text is 'object'
-		if text.photoguid
-			text.by = Plugin.userId()
-			Photo.claim text.photoguid, text
+		if url
+			Http.get
+				url: url
+				getMetaTags: true
+				name: 'httpTags'
+				memberId: Plugin.userId()
+				args: [Plugin.userId(), text]
 		else
-			addTopic Plugin.userId(), text # not used for search results anymore
-	else if (text.toLowerCase().indexOf('http') is 0 or text.toLowerCase().indexOf('www.') is 0) and text.split(' ').length is 1
-		Http.get
-			url: text
-			getMetaTags: true
-			name: 'httpTags'
-			memberId: Plugin.userId()
-			args: [Plugin.userId()]
-	else
-		addTopic Plugin.userId(), title: text
+			addPost Plugin.userId(), text: text
+	else if data.photoguid
+		# there's a photo, don't interpret any urls
+		data.by = Plugin.userId()
+		Photo.claim data.photoguid, data
 
 exports.onPhoto = (info, data) !->
-	#log 'info > ' + JSON.stringify(info)
-	#log 'data > ' + JSON.stringify(data)
 	if info.key and data.by
 		data.photo = info.key
-		addTopic data.by, data
+		addPost data.by, data
 
-exports.httpSearch = (userId, data) !->
-	Subscription.push 'search:'+userId, data
-
-exports.httpTags = (userId, data) !->
+exports.httpTags = (userId, text, data) !->
 	#log 'httpTags received: '+JSON.stringify(data)
 	if !data.url
-		# url was probably malformed, just add as title
-		addTopic userId, title: data.title
+		# url was probably malformed, just add the (url-based) title as text (unless we also have text)
+		addPost userId, text: text ? data.title
 	else
-		addTopic userId, data
+		if text
+			data.text = text
+		addPost userId, data
 
-addTopic = (userId, data) !->
-	topic =
-		title: data.title
-		description: data.description||''
-		url: data.url
+addPost = (userId, data) !->
+	post =
 		time: 0|(new Date()/1000)
 		by: userId
-
+	
+	notiText = '' # becomes text, otherwise title, otherwise (photo)
 	if data.image
-		topic.image = data.image
+		post.image = data.image
 	if data.imageThumb
-		topic.imageThumb = data.imageThumb
+		post.imageThumb = data.imageThumb
 	if data.photo
-		topic.photo = data.photo
+		post.photo = data.photo
+		notiText = '(photo)'
+	if data.url
+		post.title = data.title
+		post.description = data.description||''
+		post.url = data.url
+		notiText = post.title
+	if data.text
+		post.text = data.text
+		notiText = post.text
+
 
 	maxId = Db.shared.incr('maxId')
-	Db.shared.set(maxId, topic)
+	Db.shared.set(maxId, post)
 
 	name = Plugin.userName(userId)
 	Event.create
-		text: "#{name} added topic: #{topic.title}"
-		sender: Plugin.userId()
+		text: "#{name} posted: #{notiText}"
+		sender: userId
 
 exports.client_remove = (id) !->
 	return if Plugin.userId() isnt Db.shared.get(id, 'by') and !Plugin.userIsAdmin()
+
+	# remove any associated photos
+	Photo.remove imageThumb if imageThumb = Db.shared.get(id, 'imageThumb')
+	Photo.remove photo if photo = Db.shared.get(id, 'photo')
+
 	Db.shared.remove(id)

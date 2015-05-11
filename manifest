@@ -1,4 +1,5 @@
-name: Board
-description: Share and discuss articles, opinions, movies, music, books, etc
-store: 650
+name: Wall
+description: Post and talk about anything: status updates, photos, links to articles, etc
+icon: clock2
+store: 700
 api: 2
