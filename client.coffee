@@ -168,12 +168,12 @@ renderWall = !->
 		Ui.item !->
 			Dom.style Box: false, padding: 0
 
+			unclaimedPhoto = Photo.unclaimed 'postPhoto'
+			if unclaimedPhoto
+				photoThumb.set unclaimedPhoto.thumb
+
 			Dom.div !->
 				Dom.style Box: 'top'
-
-				unclaimedPhoto = Photo.unclaimed 'postPhoto'
-				if unclaimedPhoto
-					photoThumb.set unclaimedPhoto.thumb
 
 				if pt = photoThumb.get()
 					Dom.div !->
