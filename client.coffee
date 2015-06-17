@@ -3,6 +3,7 @@ Dom = require 'dom'
 Event = require 'event'
 Form = require 'form'
 Icon = require 'icon'
+Loglist = require 'loglist'
 Modal = require 'modal'
 Obs = require 'obs'
 Page = require 'page'
@@ -55,9 +56,9 @@ renderPost = (postId, startFocused = false) !->
 					Flex: 1
 					padding: '8px'
 					margin: '8px 8px 4px 8px'
-					backgroundColor: '#fff'
-					border: '1px solid #eee'
-					borderBottom: '2px solid #eee'
+					backgroundColor: '#eee'
+					border: '1px solid #ddd'
+					borderBottom: '2px solid #ddd'
 					borderRadius: '2px'
 				Dom.cls 'link-box'
 
@@ -131,6 +132,7 @@ renderPost = (postId, startFocused = false) !->
 			startFocused: startFocused
 
 renderWall = !->
+	Dom.style backgroundColor: '#f8f8f8'
 	addingPost = Obs.create 0
 	Ui.list !->
 		addE = null
@@ -258,31 +260,40 @@ renderWall = !->
 						Ui.spinner 24
 					Dom.text tr("Adding...")
 
-		count = 0
+		postCnt = 0
 		empty = Obs.create(true)
 
-		# List of all posts
-		Db.shared.iterate (post) !->
-			empty.set(!++count)
+		if fv = Page.state.get('firstV')
+			firstV = Obs.create(fv)
+		else
+			firstV = Obs.create(-Math.max(1, (Db.shared.peek('maxId')||0)-20))
+		lastV = Obs.create()
+			# firstV and lastV are inversed when they go into Loglist
+		Obs.observe !->
+			lastV.set -(Db.shared.get('maxId')||0)
+
+		# list of all posts
+		Loglist.render lastV, firstV, (num) !->
+			num = -num
+			post = Db.shared.ref(num)
+			return if !post.get('time')
+			empty.set(!++postCnt)
+
+			renderListPost post
+
 			Obs.onClean !->
-				empty.set(!--count)
+				empty.set(!--postCnt)
 
-			Dom.section !->
-				Dom.style padding: '8px'
-				if !post.get('url')
-					Dom.cls 'main-box'
+		Dom.div !->
+			if firstV.get()==-1
+				Dom.style display: 'none'
+				return
+			Dom.style padding: '4px', textAlign: 'center'
 
-				renderListPost post
-
-				Dom.onTap !->
-					Page.nav post.key()
-
-
-		, (post) ->
-			if +post.key()
-				createTime = post.get('time')
-				orderTime = Event.getOrder([post.key()])
-				-Math.max(createTime, orderTime)
+			Ui.button tr("Earlier posts"), !->
+				fv = Math.min(-1, firstV.peek()+20)
+				firstV.set fv
+				Page.state.set('firstV', fv)
 
 		Obs.observe !->
 			if empty.get()
@@ -295,73 +306,42 @@ renderWall = !->
 
 
 renderListPost = (post) !->
-	url = post.get('url')
-
 	Dom.div !->
-		Dom.style Box: 'top', margin: '-8px', padding: '8px'
+		Dom.style Box: 'top', borderBottom: '1px solid #e8e8e8'
 
-		bgUrl = false
-		showLarge = false
-		if key = post.get 'imageThumb'
-			bgUrl = Photo.url key, 200
-		else if key = post.get 'photo'
-			bgUrl = Photo.url key, 400
-			showLarge = true
-		
-		if bgUrl
-			Dom.div !->
-				Dom.style
-					margin: '0 10px 0 0'
-					width: (if showLarge then 120 else 50)+'px'
-					height: (if showLarge then 80 else 50)+'px'
-					backgroundImage: "url(#{bgUrl})"
-					backgroundSize: 'cover'
-					backgroundPosition: '50% 50%'
+		url = post.get('url')
+		userId = post.get 'by'
 
+		# posting user's avatar
+		Ui.avatar Plugin.userAvatar(userId),
+			style: margin: '8px 0 0 0'
+			onTap: !-> Plugin.userInfo(userId)
+
+		# main box showing content of the post
 		Dom.div !->
-			Dom.style Flex: 1
+			Dom.style padding: '4px 4px 8px 8px', Flex: 1
+
+			# header with name, time, likes, comments and unreadbubble
 			Dom.div !->
-				Dom.style Box: true
-				mh = if showLarge then 60 else (if !url then 0 else 30)
-				Dom.style minHeight: mh+'px', marginTop: '2px'
-
-				Dom.div !->
-					Dom.style Flex: 1, marginRight: '6px'
-					Dom.span !->
-						if url
-							Dom.style color: '#888', fontWeight: 'bold', fontSize: '85%'
-							Dom.text post.get('title')
-						else
-							text = post.get('text')||''
-							text = text.replace(/\n/g, ' ') # think of something more appropriate for this
-							Dom.userText text
-
-				Dom.div !->
-					Dom.style Box: 'middle', marginRight: '-6px'
-					Event.renderBubble [post.key()]
-
-			Dom.div !->
-				Dom.style
-					Box: true
-					marginTop: '4px'
-					fontSize: '70%'
-					color: '#aaa'
+				Dom.style Box: 'bottom', Flex: 1 ,margin: '4px 0'
 				Dom.div !->
 					Dom.span !->
-						Dom.style color: (if Event.isNew(post.get('time')) then '#5b0' else 'inherit')
+						Dom.style color: (if Event.isNew(post.get('time')) then '#5b0' else 'inherit'), fontWeight: 'bold'
 						Dom.text Plugin.userName(post.get('by'))
-					Dom.text " • "
-					Time.deltaText post.get('time'), 'short'
+					Dom.span !->
+						Dom.style color: '#aaa', fontSize: '80%'
+						Dom.text " • "
+						Time.deltaText post.get('time'), 'short'
 
 				Dom.div !->
-					Dom.style Flex: 1, textAlign: 'right', fontWeight: 'bold', marginTop: '1px', paddingRight: '2px'
+					Dom.style Flex: 1, textAlign: 'right', paddingRight: '2px'
 
 					if commentCnt = Db.shared.get('comments', post.key(), 'max')
 						Dom.span !->
-							Dom.style display: 'inline-block', padding: '5px 0 5px 8px', margin: '-7px -3px'
+							Dom.style display: 'inline-block', fontSize: '85%', color: '#aaa'
 							Icon.render
 								data: 'comments'
-								size: 13
+								size: 16
 								color: '#aaa'
 								style: {verticalAlign: 'bottom', margin: '1px 2px 0 1px'}
 							Dom.span commentCnt
@@ -370,25 +350,93 @@ renderListPost = (post) !->
 					likeCnt++ for k,v of Db.shared.get('likes', post.key()+'-post') when +k and v>0
 					if likeCnt
 						Dom.span !->
-							Dom.style display: 'inline-block', padding: '5px 0 5px 10px', margin: '-7px -3px'
+							Dom.style display: 'inline-block', fontSize: '85%', color: '#aaa'
 							Icon.render
 								data: 'thumbup'
-								size: 13
+								size: 16
 								color: '#aaa'
-								style: {verticalAlign: 'bottom', margin: '0 2px 1px 1px'}
+								style: {verticalAlign: 'bottom', margin: '0 2px 1px 8px'}
 							Dom.span likeCnt
 
-	if url and (text = post.get('text'))
-		Dom.div !->
-			Dom.style margin: '8px -8px -8px -8px', padding: '8px', backgroundColor: '#F8F8F8', borderTop: '1px solid #ddd'
-			Dom.cls 'link-box'
-			Dom.userText text
-			Dom.onTap !-> Page.nav
-				0: post.key()
-				focus: true
+					# unread bubble
+					Event.renderBubble [post.key()], style: margin: '-3px -6px -3px 8px'
+
+			# post user text
+			Dom.div !->
+				Dom.cls 'user-text'
+				Dom.userText post.get('text')||''
+
+
+			# url or image attachment
+			if url
+				Dom.div !->
+					Dom.cls 'link-box'
+					Dom.style
+						Box: true
+						backgroundColor: '#eee'
+						border: '1px solid #ddd'
+						borderBottom: '2px solid #ddd'
+						padding: '6px'
+						borderRadius: '2px'
+						margin: '12px 0 8px 0'
+					if key = post.get 'imageThumb'
+						bgUrl = Photo.url key, 200
+						Dom.div !->
+							Dom.style
+								borderRadius: '2px 0 0 2px'
+								width: '50px'
+								height: '50px'
+								margin: '2px 7px 0 2px'
+								backgroundImage: "url(#{bgUrl})"
+								backgroundSize: 'cover'
+								backgroundPosition: '50% 50%'
+
+					Dom.div !->
+						Dom.style Flex: 1, fontSize: '80%'
+						Dom.div !->
+							Dom.style textTransform: 'uppercase', color: '#888', fontWeight: 'bold'
+							Dom.text post.get('title')
+						Dom.div !->
+							if descr = post.get('description')
+								Dom.span !->
+									Dom.text descr + ' '
+							domain = url.match(/(^https?:\/\/)?([^\/]+)/)[2].split('.').slice(-2).join('.')
+							Dom.span !->
+								Dom.style
+									color: '#aaa'
+									fontSize: '90%'
+									whiteSpace: 'nowrap'
+									textTransform: 'uppercase'
+								Dom.text domain
+					Dom.onTap !->
+						Plugin.openUrl url
+
+			else if key = post.get 'photo'
+				bgUrl = Photo.url key, 1000
+				vpWidth = Dom.viewport.get 'width'
+				vpHeight = Dom.viewport.get 'height'
+				width = vpWidth-66
+				if width * (1/2) > vpHeight * (1/2.5)
+					height = 1/3 * vpHeight
+					width = (2/1) * height
+				else
+					height = (1/2) * width
+
+				Dom.div !->
+					Dom.style
+						borderRadius: '2px'
+						margin: '12px 0 8px 0'
+						width: Math.round(width)+'px'
+						height: Math.round(height)+'px'
+						backgroundImage: "url(#{bgUrl})"
+						backgroundSize: 'cover'
+						backgroundPosition: '50% 50%'
+
+		Dom.onTap !->
+			Page.nav post.key()
 
 Dom.css
-	'.main-box':
-		backgroundColor: '#f8f8f8'
-	'.link-box.tap, .main-box.tap':
+	'.link-box.tap':
 		background: 'rgba(0, 0, 0, 0.1) !important'
+	'.user-text A':
+		color: '#aaa'
