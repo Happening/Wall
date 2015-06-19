@@ -18,12 +18,12 @@ Util = require 'util'
 
 exports.render = !->
 	if postId = Page.state.get(0)
-		renderPost postId, !!Page.state.get('focus')
+		renderSinglePost postId, !!Page.state.get('focus')
 	else
 		renderWall()
 
 
-renderPost = (postId, startFocused = false) !->
+renderSinglePost = (postId, startFocused = false) !->
 	Page.setTitle tr("Post")
 	post = Db.shared.ref(postId)
 	Event.showStar post.get('title')
@@ -78,7 +78,6 @@ renderPost = (postId, startFocused = false) !->
 
 					Dom.text post.get('description')
 
-					domain = url.match(/(^https?:\/\/)?([^\/]+)/)[2].split('.').slice(-2).join('.')
 					Dom.div !->
 						Dom.style
 							marginTop: '6px'
@@ -87,7 +86,7 @@ renderPost = (postId, startFocused = false) !->
 							whiteSpace: 'nowrap'
 							textTransform: 'uppercase'
 							fontWeight: 'normal'
-						Dom.text domain
+						Dom.text Util.getDomainFromUrl(url)
 
 				Dom.onTap !->
 					Plugin.openUrl url
@@ -134,129 +133,164 @@ renderPost = (postId, startFocused = false) !->
 renderWall = !->
 	Dom.style backgroundColor: '#f8f8f8'
 	addingPost = Obs.create 0
-	Ui.list !->
-		addE = null
-		unclaimedPhoto = false
-		photoThumb = Obs.create false
 
-		addingUrl = Obs.create false
-		editingInput = Obs.create false
+	Dom.div !->
+		Dom.style Box: 'top', borderBottom: '1px solid #ebebeb', paddingBottom: '8px'
 
-		save = !->
-			photoguid = if unclaimedPhoto then unclaimedPhoto.claim() else false
-			return if !(val = addE.value().trim()) and !photoguid
+		Ui.avatar Plugin.userAvatar(),
+			style: margin: '8px 0 0 0'
+			onTap: !-> Plugin.userInfo()
 
-			newId = (0|Db.shared.get('maxId'))+1
-			Event.subscribe [newId] # TODO: subscribe serverside
-			addingPost.set newId
+		Dom.div !->
+			Dom.style Flex: 1, border: '1px solid #e0e0e0', borderBottom: '2px solid #e0e0e0', borderRadius: '2px', margin: '4px 4px 8px 8px', backgroundColor: '#fff'
+			addE = null
+			unclaimedPhoto = false
+			photoThumb = Obs.create false
 
-			if photoguid
+			containsUrl = Obs.create false
+			containsText = Obs.create false
+
+			save = !->
+				photoguid = false
+				val = addE.value().trim()
+				draft = Db.personal.get('draft')
+				if draft and unclaimedPhoto
+					unclaimedPhoto.discard() # draft takes precedence over photo
+				else if unclaimedPhoto
+					photoguid = unclaimedPhoto.claim()
+				return if !val and !photoguid and !draft # we need something..
+
+				newId = (0|Db.shared.get('maxId'))+1
+				Event.subscribe [newId] # TODO: subscribe serverside
+				addingPost.set newId
+
 				text = Form.smileyToEmoji val
 				Server.sync 'add',
 					text: text
 					photoguid: photoguid
-			else
-				if !addingUrl.get()
-					val = Form.smileyToEmoji val
-				Server.sync 'add', val # val is only the text
 
-			photoThumb.set null
-			addE.value ""
-			editingInput.set false
-			Form.blur()
+				photoThumb.set null
+				addE.value ''
+				containsText.set false
+				Form.blur()
 
 
-		# Top entry: adding a post
-		Ui.item !->
-			Dom.style Box: false, padding: 0
-
-			unclaimedPhoto = Photo.unclaimed 'postPhoto'
-			if unclaimedPhoto
-				photoThumb.set unclaimedPhoto.thumb
-
+			# post-something interface
 			Dom.div !->
-				Dom.style Box: 'top'
-
-				if pt = photoThumb.get()
-					Dom.div !->
-						Dom.style
-							width: '80px'
-							height: '80px'
-							margin: '0 8px 8px 0'
-							backgroundImage: "url(#{pt})"
-							backgroundSize: 'cover'
-							backgroundPosition: '50% 50%'
-						Dom.onTap !->
-							Modal.confirm tr("Remove photo?"), !->
-								unclaimedPhoto.discard()
-								photoThumb.set null
-
-				addE = Form.text
-					simple: true
-					name: 'post'
-					text: tr("What's happening?")
-					rows: 3
-					onChange: (v) !->
-						v = v?.trim()||''
-						if v
-							editingInput.set v
-							isUrl = v.split(' ').length is 1 and (v.toLowerCase().indexOf('http') is 0 or v.toLowerCase().indexOf('www.') is 0)
-							addingUrl.set !!isUrl
-						else
-							editingInput.set false
-							addingUrl.set false
-					inScope: !->
-						Dom.style
-							Flex: 1
-							display: 'block'
-							fontSize: '100%'
-							border: 'none'
-							width: '100%'
-					onContent: (content) !->
-						urls = Util.getUrlsFromText content
-						addE.value (if urls.length is 1 then urls[0] else content)
-							# if it's one url in text, we'll only share the url
-
-				Obs.onClean !->
-					if unclaimedPhoto
-						unclaimedPhoto.discard()
-
-			Dom.div !->
-				Dom.style
-					Box: 'middle'
-					backgroundColor: '#f8f8f8'
-					borderTop: '1px solid #ddd'
-					margin: '0 -8px -8px -8px'
-					padding: '4px'
+				unclaimedPhoto = Photo.unclaimed 'postPhoto'
+				if unclaimedPhoto
+					photoThumb.set unclaimedPhoto.thumb
 
 				Dom.div !->
-					Dom.style Flex: 1
-					if !photoThumb.get()
+					Dom.style padding: '6px', Box: 'bottom', minHeight: '36px'
+
+					addE = Form.text
+						simple: true
+						name: 'post'
+						text: tr("What's happening?")
+						onChange: (v) !->
+							v = v?.trim()||''
+							if v
+								containsText.set v
+								urls = Util.getUrlsFromText v
+								containsUrl.set !!urls.length
+							else
+								containsText.set false
+								containsUrl.set false
+						inScope: !->
+							Dom.style
+								Flex: 1
+								display: 'block'
+								fontSize: '100%'
+								paddingBottom: '2px'
+								border: 'none'
+								width: '100%'
+						onContent: (content) !->
+							urls = Util.getUrlsFromText content
+
+							# if it's one url in text, we'll only show an url preview
+							if urls.length is 1
+								Server.sync 'draft', urls[0]
+							else
+								addE.value content
+
+					Obs.observe !->
+						showPost = containsText.get() or photoThumb.get() or Db.personal.get('draft')
+						# post button
+						Ui.button !->
+							Dom.style display: (if showPost then 'inline-block' else 'none'), margin: '3px 2px'
+							Dom.text tr("Post")
+						, save
+
+						# camera icon
 						Icon.render
 							style:
-								padding: '8px'
+								padding: '12px'
+								margin: '-6px'
+								display: (if showPost then 'none' else 'inline-block')
 							data: 'camera'
 							color: '#aaa'
 							onTap: !->
 								Photo.pick null, null, 'postPhoto'
 
-				Ui.button !->
-					Dom.text (if addingUrl.get() and !photoThumb.get() then tr("Post URL") else tr("Post"))
-				, save
+					Obs.onClean !->
+						if unclaimedPhoto
+							unclaimedPhoto.discard()
+
+				Obs.observe !->
+					if pt = photoThumb.get()
+						# show photo
+						renderAttachedPhoto pt, 86, !->
+							Modal.confirm tr("Remove photo?"), !->
+								unclaimedPhoto.discard()
+								photoThumb.set null
+					else if Db.personal.get('draft')
+						# show url snippet
+						draft = Db.personal.ref('draft')
+						renderAttachedUrl draft, true
+
+						# remove text (it's only this url)
+						val = addE.value().trim()
+						urls = Util.getUrlsFromText val
+						if urls.length and urls[0].indexOf(val.toLowerCase()) >= 0
+							addE.value ''
+					else
+						# show snippet placeholder (tap to get preview)
+						Dom.div !->
+							Dom.cls 'link-box'
+							draft = Db.personal.get('draft')
+							Dom.style
+								Box: 'middle center'
+								display: if (draft is 0 or containsUrl.get()) and !photoThumb.get() then '' else 'none'
+								height: '40px'
+								fontSize: '80%'
+								backgroundColor: '#eee'
+								border: '1px solid #ddd'
+								borderBottom: '2px solid #ddd'
+								margin: '0 8px 8px 8px'
+								borderRadius: '2px'
+							if draft is 0
+								Dom.style color: 'inherit', textTransform: 'none', fontWeight: 'normal'
+								Ui.spinner 12, !-> Dom.style marginRight: '6px'
+								Dom.text tr("Fetching..")
+							else
+								Dom.style color: Plugin.colors().highlight, textTransform: 'uppercase', fontWeight: 'bold'
+								Dom.text tr("Get link preview")
+								Dom.onTap !->
+									urls = Util.getUrlsFromText addE.value().trim()
+									Server.sync 'draft', urls[0], !->
+										Db.personal.set 'draft', 0 # in progress
 
 
 	Dom.div !->
+		# spinner when a new post is added
 		Obs.observe !->
 			maxId = 0|Db.shared.get 'maxId'
 			if addingPost.get()>maxId
 				Ui.item !->
 					Dom.style padding: '8px 4px', color: '#aaa'
 					Dom.div !->
-						Dom.style
-							Box: 'center middle'
-							width: '50px'
-							height: '50px'
-							marginRight: '10px'
+						Dom.style Box: 'center middle', width: '50px', height: '50px', marginRight: '10px'
 						Ui.spinner 24
 					Dom.text tr("Adding...")
 
@@ -279,7 +313,7 @@ renderWall = !->
 			return if !post.get('time')
 			empty.set(!++postCnt)
 
-			renderListPost post
+			renderPost post
 
 			Obs.onClean !->
 				empty.set(!--postCnt)
@@ -305,14 +339,14 @@ renderWall = !->
 					Dom.text tr("Nothing has been posted yet")
 
 
-renderListPost = (post) !->
+renderPost = (post) !->
 	Dom.div !->
-		Dom.style Box: 'top', borderBottom: '1px solid #e8e8e8'
+		Dom.style Box: 'top', padding: 0, borderBottom: '1px solid #ebebeb'
 
 		url = post.get('url')
 		userId = post.get 'by'
 
-		# posting user's avatar
+		# avatar of the user who posted this
 		Ui.avatar Plugin.userAvatar(userId),
 			style: margin: '8px 0 0 0'
 			onTap: !-> Plugin.userInfo(userId)
@@ -369,71 +403,95 @@ renderListPost = (post) !->
 
 			# url or image attachment
 			if url
-				Dom.div !->
-					Dom.cls 'link-box'
-					Dom.style
-						Box: true
-						backgroundColor: '#eee'
-						border: '1px solid #ddd'
-						borderBottom: '2px solid #ddd'
-						padding: '6px'
-						borderRadius: '2px'
-						margin: '12px 0 8px 0'
-					if key = post.get 'imageThumb'
-						bgUrl = Photo.url key, 200
-						Dom.div !->
-							Dom.style
-								borderRadius: '2px 0 0 2px'
-								width: '50px'
-								height: '50px'
-								margin: '2px 7px 0 2px'
-								backgroundImage: "url(#{bgUrl})"
-								backgroundSize: 'cover'
-								backgroundPosition: '50% 50%'
-
-					Dom.div !->
-						Dom.style Flex: 1, fontSize: '80%'
-						Dom.div !->
-							Dom.style textTransform: 'uppercase', color: '#888', fontWeight: 'bold'
-							Dom.text post.get('title')
-						Dom.div !->
-							if descr = post.get('description')
-								Dom.span !->
-									Dom.text descr + ' '
-							domain = url.match(/(^https?:\/\/)?([^\/]+)/)[2].split('.').slice(-2).join('.')
-							Dom.span !->
-								Dom.style
-									color: '#aaa'
-									fontSize: '90%'
-									whiteSpace: 'nowrap'
-									textTransform: 'uppercase'
-								Dom.text domain
-					Dom.onTap !->
-						Plugin.openUrl url
-
-			else if key = post.get 'photo'
-				bgUrl = Photo.url key, 1000
-				vpWidth = Dom.viewport.get 'width'
-				vpHeight = Dom.viewport.get 'height'
-				width = vpWidth-66
-				if width * (1/2) > vpHeight * (1/2.5)
-					height = 1/3 * vpHeight
-					width = (2/1) * height
-				else
-					height = (1/2) * width
-
-				Dom.div !->
-					Dom.style
-						borderRadius: '2px'
-						margin: '12px 0 8px 0'
-						width: Math.round(width)+'px'
-						height: Math.round(height)+'px'
-						backgroundImage: "url(#{bgUrl})"
-						backgroundSize: 'cover'
-						backgroundPosition: '50% 50%'
+				renderAttachedUrl post
+			else if post.get 'photo'
+				key = post.get 'photo'
+				bgUrl = Photo.url key, 800
+				renderAttachedPhoto bgUrl, 68
 
 		Dom.onTap !->
 			Page.nav post.key()
+
+
+
+renderAttachedPhoto = (bgUrl, margin, onTap) !->
+	vpWidth = Dom.viewport.get 'width'
+	vpHeight = Dom.viewport.get 'height'
+	width = vpWidth-margin
+	if width * (1/2) > vpHeight * (1/2.5)
+		height = 1/3 * vpHeight
+		width = (2/1) * height
+	else
+		height = (1/2) * width
+
+	Dom.div !->
+		Dom.style
+			borderRadius: '2px'
+			margin: if onTap then '0 8px 8px 8px' else '12px 0 8px 0'
+			width: Math.round(width)+'px'
+			height: Math.round(height)+'px'
+			backgroundImage: "url(#{bgUrl})"
+			backgroundSize: 'cover'
+			backgroundPosition: '50% 50%'
+		if onTap
+			Dom.onTap onTap
+
+
+
+renderAttachedUrl = (post, isDraft) !->
+	Dom.div !->
+		url = post.get 'url'
+		Dom.cls 'link-box'
+		Dom.style
+			Box: true
+			backgroundColor: '#eee'
+			border: '1px solid #ddd'
+			borderBottom: '2px solid #ddd'
+			padding: '6px'
+			borderRadius: '2px'
+			margin: if isDraft then '0 8px 8px 8px' else '12px 0 8px 0'
+		if key = post.get 'imageThumb'
+			bgUrl = Photo.url key, 200
+			Dom.div !->
+				Dom.style
+					borderRadius: '2px 0 0 2px'
+					width: '50px'
+					height: '50px'
+					margin: '2px 7px 0 2px'
+					backgroundImage: "url(#{bgUrl})"
+					backgroundSize: 'cover'
+					backgroundPosition: '50% 50%'
+
+		Dom.div !->
+			Dom.style Flex: 1, fontSize: '80%'
+			if isDraft
+				Icon.render
+					style:
+						padding: '8px'
+						margin: '-6px -6px 6px 6px'
+						float: 'right'
+					data: 'cancel'
+					color: '#aaa'
+					onTap: !->
+						Server.sync 'draft', false
+
+			Dom.div !->
+				Dom.style textTransform: 'uppercase', color: '#888', fontWeight: 'bold'
+				Dom.text post.get('title')
+			Dom.div !->
+				if descr = post.get('description')
+					Dom.span !->
+						Dom.text descr + ' '
+				Dom.span !->
+					Dom.style
+						color: '#aaa'
+						fontSize: '90%'
+						whiteSpace: 'nowrap'
+						textTransform: 'uppercase'
+					Dom.text Util.getDomainFromUrl(url)
+
+		Dom.onTap !->
+			Plugin.openUrl url
 
 Dom.css
 	'.link-box.tap':
