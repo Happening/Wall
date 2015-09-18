@@ -1,135 +1,131 @@
 Db = require 'db'
 Event = require 'event'
 Http = require 'http'
+Metatags = require 'metatags'
 Photo = require 'photo'
 Plugin = require 'plugin'
 Subscription = require 'subscription'
 Util = require 'util'
 
+exports.onUpgrade = !->
+	all = Db.shared.get()
+	for id,data of all when 0|id
+		if newImage = data.imageThumb || data.photo
+			delete data.imageThumb
+			delete data.photo
+			data.image = newImage
+		if data.by
+			data.memberId = data.by
+			delete data.by
+	Db.shared.set all
+
 exports.getTitle = -> # we implemented our own title input
 
-exports.client_add = (data) !->
-	#log '_add', JSON.stringify(data)
-	userId = Plugin.userId()
-	if data.photoguid
-		# there's a photo, don't interpret any urls
-		data.by = userId
-		Photo.claim data.photoguid, data
 
-		# remove draft if there somehow is one
-		if Db.personal(userId).get('draft', 'title')
-			Db.personal(userId).remove 'draft'
-	else if data.text?
-		text = data.text.trim()
-		if post = Db.personal(userId).get('draft')
-			# there's a draft url attachment
-			post.text = text
-			addPost userId, post
-			Db.personal(userId).remove('draft')
-		else
-			# see if there are any urls
-			urls = Util.getUrlsFromText text
-			url = null
-			if urls.length is 1
-				if text.split(' ').length is 1
-					# share only the url, no text
-					url = text
-					text = null
-				else
-					# share the first url, but also the original text
-					url = urls[0]
-
-			if url
-				Http.get
-					url: url
-					getMetaTags: true
-					name: 'httpTags'
-					memberId: userId
-					args: [userId, text]
-			else
-				addPost userId, text: text
 	
-
 exports.client_draft = (url) !->
-	userId = Plugin.userId()
+	personal = Db.personal()
 	if url
-		Db.personal(userId).set 'draft', 0
+		personal.set 'draft', 0
 		Http.get
 			url: url
-			getMetaTags: true
-			name: 'draftHttpTags'
-			memberId: userId
-			args: [userId]
+			cb: ['handleDraftUrlPage', Plugin.memberId(), url]
 	else
-		Db.personal(userId).remove 'draft'
+		personal.remove 'draft'
 
-exports.onPhoto = (info, data) !->
-	if info.key and data.by
-		data.photo = info.key
-		addPost data.by, data
-
-exports.draftHttpTags = (userId, data) !->
-	#log 'draftHttpTags received: '+JSON.stringify(data)
-	if data.url
-		draftPost =
-			url: data.url
-			title: data.title
-			description: data.description||''
-		if data.image
-			draftPost.image = data.image
-		if data.imageThumb
-			draftPost.imageThumb = data.imageThumb
-
-		Db.personal(userId).set 'draft', draftPost
+exports.handleDraftUrlPage = (memberId, url, resp) !->
+	if meta = getMeta(resp)
+		meta.url = url
+		Db.personal(memberId).set 'draft', meta
 	else
-		Db.personal(userId).remove 'draft'
+		Db.personal(memberId).remove 'draft'
 
-exports.httpTags = (userId, text, data) !->
-	#log 'httpTags received: '+JSON.stringify(data)
-	if !data.url
-		# url was probably malformed, just add the (url-based) title as text (unless we also have text)
-		addPost userId, text: text ? data.title
-	else
-		if text
-			data.text = text
-		addPost userId, data
 
-addPost = (userId, data) !->
-	post =
-		time: 0|(new Date()/1000)
-		by: userId
+
+
+exports.client_add = (post) !->
+	log '_add', JSON.stringify(post)
+	post.memberId = Plugin.memberId()
+	text = post.text = post.text.trim() if post.text
+
+	personal = Db.personal()
+	if draft = personal.get('draft')
+		personal.remove 'draft'
+
+	if guid = post.photoguid
+		# there's a photo, don't interpret any urls
+		delete post.photoguid
+		Photo.claim
+			guid: guid
+			cb: ['handlePhoto', post]
+		return
+
+	if draft
+		post[k] = v for k,v of draft
+		addPost post
+		return
+
+	if !text
+		post.onReady?.reply()
+		return
+
+	# see if there are any urls
+	if url = Util.getUrlsFromText(text)[0]
+		if url==text # share only the url, no text
+			post.text = null
+		post.url = url
+		Http.get
+			url: url
+			cb: ['handleUrlPage', post]
+		return
+
+	addPost post
+
+
+exports.handlePhoto = (post, photoInfo) !->
+	post.image = photoInfo?.key
+	addPost post
+
+getMeta = (resp) ->
+	if resp.body and meta = Metatags.fromHtml(resp.body)
+		title: meta.title
+		image: meta.image
+		description: meta.description
+
+exports.handleUrlPage = (post, resp) !->
+	if meta = getMeta(resp)
+		for k,v of meta
+			post[k] = v
+	addPost post
+
+exports.handleUrlPhoto = (post, photoInfo) !->
+	post.image = photoInfo?.key
+	addPost post
+
+addPost = (post) !->
+	if post.image and post.image.indexOf('/') > 0
+		Photo.claim
+			url: post.image
+			cb: ['handleUrlPhoto',post]
+			memberId: post.memberId
+		return
+
+	post.time = 0|(new Date()/1000)
 	
-	notiText = '' # becomes text, otherwise title, otherwise (photo)
-	if data.image
-		post.image = data.image
-	if data.imageThumb
-		post.imageThumb = data.imageThumb
-	if data.photo
-		post.photo = data.photo
-		notiText = '(photo)'
-	if data.url
-		post.title = data.title
-		post.description = data.description||''
-		post.url = data.url
-		notiText = post.title
-	if data.text
-		post.text = data.text
-		notiText = post.text
-
-
 	maxId = Db.shared.incr('maxId')
-	Db.shared.set(maxId, post)
+	Db.shared.set maxId, post
+	post.onReady?.reply()
 
-	name = Plugin.userName(userId)
+	name = Plugin.userName(post.memberId)
+	notiText = post.text || post.title || post.url || '(photo)'
 	Event.create
 		text: "#{name} posted: #{notiText}"
-		sender: userId
+		sender: post.memberId
 
 exports.client_remove = (id) !->
-	return if Plugin.userId() isnt Db.shared.get(id, 'by') and !Plugin.userIsAdmin()
+	return if Plugin.memberId() isnt Db.shared.get(id, 'memberId') and !Plugin.userIsAdmin()
 
-	# remove any associated photos
-	Photo.remove imageThumb if imageThumb = Db.shared.get(id, 'imageThumb')
-	Photo.remove photo if photo = Db.shared.get(id, 'photo')
+	Photo.remove image if (image = Db.shared.get(id, 'image')) and image.indexOf('/') < 0
 
 	Db.shared.remove(id)
+

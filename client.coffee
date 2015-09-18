@@ -16,6 +16,7 @@ Ui = require 'ui'
 Util = require 'util'
 {tr} = require 'i18n'
 
+
 exports.render = !->
 	if postId = Page.state.get(0)
 		renderSinglePost postId, !!Page.state.get('focus')
@@ -27,7 +28,7 @@ renderSinglePost = (postId, startFocused = false) !->
 	Page.setTitle tr("Post")
 	post = Db.shared.ref(postId)
 	Event.showStar post.get('title')
-	if Plugin.userId() is post.get('by') or Plugin.userIsAdmin()
+	if Plugin.userId() is post.get('memberId') or Plugin.userIsAdmin()
 		Page.setActions
 			icon: 'trash'
 			action: !->
@@ -40,15 +41,10 @@ renderSinglePost = (postId, startFocused = false) !->
 		Dom.style margin: '-16px -8px 0', padding: '8px 0', backgroundColor: '#f8f8f8', borderBottom: '2px solid #ccc'
 
 		url = post.get('url')
-		imgUrl = false
-		if key = post.get('imageThumb')
-			imgUrl = Photo.url key, 400
-		else if image = post.get('image')
-			imgUrl = image
+		image = post.get('image')
 
-		if !url and key = post.get('photo')
-			require('photoview').render
-				key: key
+		if !url and image
+			require('photoview').render key:image
 		else if url
 			Dom.div !->
 				Dom.style
@@ -62,13 +58,13 @@ renderSinglePost = (postId, startFocused = false) !->
 					borderRadius: '2px'
 				Dom.cls 'link-box'
 
-				if imgUrl
+				if image
 					Dom.img !->
 						Dom.style
 							maxWidth: '120px'
 							maxHeight: '200px'
 							margin: '2px 8px 4px 2px'
-						Dom.prop 'src', imgUrl
+						Dom.prop 'src', if image.indexOf('/') < 0 then Photo.url(image, 400) else image
 
 				Dom.div !->
 					Dom.style Flex: 1, fontSize: '90%'
@@ -98,7 +94,7 @@ renderSinglePost = (postId, startFocused = false) !->
 
 
 		expanded = Obs.create false
-		byUserId = post.get('by')
+		byUserId = post.get('memberId')
 		Dom.div !->
 			Dom.style
 				padding: '8px 8px 0 8px'
@@ -132,7 +128,7 @@ renderSinglePost = (postId, startFocused = false) !->
 
 renderWall = !->
 	Dom.style backgroundColor: '#f8f8f8'
-	addingPost = Obs.create 0
+	addingPost = Obs.create false
 
 	Dom.div !->
 		Dom.style Box: 'top', borderBottom: '1px solid #ebebeb', paddingBottom: '8px'
@@ -162,12 +158,13 @@ renderWall = !->
 
 				newId = (0|Db.shared.get('maxId'))+1
 				Event.subscribe [newId] # TODO: subscribe serverside
-				addingPost.set newId
+				addingPost.set true
 
 				text = Form.smileyToEmoji val
 				Server.sync 'add',
 					text: text
 					photoguid: photoguid
+					onReady: -> addingPost.set false
 
 				photoThumb.set null
 				addE.value ''
@@ -186,7 +183,6 @@ renderWall = !->
 
 					addE = Form.text
 						simple: true
-						name: 'post'
 						text: tr("What's happening?")
 						onChange: (v) !->
 							v = v?.trim()||''
@@ -206,11 +202,12 @@ renderWall = !->
 								border: 'none'
 								width: '100%'
 						onContent: (content) !->
-							urls = Util.getUrlsFromText content
+							content = content.trim()
+							url = Util.getUrlsFromText(content)[0]
 
 							# if it's one url in text, we'll only show an url preview
-							if urls.length is 1
-								Server.sync 'draft', urls[0]
+							if url==content
+								Server.sync 'draft', url
 							else
 								addE.value content
 
@@ -250,12 +247,6 @@ renderWall = !->
 						# show url snippet
 						draft = Db.personal.ref('draft')
 						renderAttachedUrl draft, true
-
-						# remove text (it's only this url)
-						val = addE.value().trim()
-						urls = Util.getUrlsFromText val
-						if urls.length and urls[0].indexOf(val.toLowerCase()) >= 0
-							addE.value ''
 					else
 						# show snippet placeholder (tap to get preview)
 						Dom.div !->
@@ -282,22 +273,26 @@ renderWall = !->
 								Dom.style color: Plugin.colors().highlight, textTransform: 'uppercase', fontWeight: 'bold'
 								Dom.text tr("Get link preview")
 								Dom.onTap !->
-									urls = Util.getUrlsFromText addE.value().trim()
-									Server.sync 'draft', urls[0], !->
+									text = addE.value().trim()
+									url = Util.getUrlsFromText(text)[0]
+									Server.sync 'draft', url, !->
 										Db.personal.set 'draft', 0 # in progress
+									if url==text
+										addE.value ''
+
 
 
 	Dom.div !->
 		# spinner when a new post is added
 		Obs.observe !->
 			maxId = 0|Db.shared.get 'maxId'
-			if addingPost.get()>maxId
-				Ui.item !->
-					Dom.style padding: '8px 4px', color: '#aaa'
+			if addingPost.get()
+				Dom.div !->
+					Dom.style Box: 'middle', padding: '8px 0', borderBottom: '1px solid #ebebeb'
+					Ui.spinner 38
 					Dom.div !->
-						Dom.style Box: 'center middle', width: '50px', height: '50px', marginRight: '10px'
-						Ui.spinner 24
-					Dom.text tr("Adding...")
+						Dom.style paddingLeft: '8px', color: '#aaa', Flex: 1
+						Dom.text tr("Adding...")
 
 		postCnt = 0
 		empty = Obs.create(true)
@@ -349,7 +344,7 @@ renderPost = (post) !->
 		Dom.style Box: 'top', padding: 0, borderBottom: '1px solid #ebebeb'
 
 		url = post.get('url')
-		userId = post.get 'by'
+		userId = post.get 'memberId'
 
 		# avatar of the user who posted this
 		Ui.avatar Plugin.userAvatar(userId),
@@ -367,7 +362,7 @@ renderPost = (post) !->
 				Dom.div !->
 					Dom.span !->
 						Dom.style color: (if Event.isNew(post.get('time')) then '#5b0' else 'inherit'), fontWeight: 'bold'
-						Dom.text Plugin.userName(post.get('by'))
+						Dom.text Plugin.userName(post.get('memberId'))
 					Dom.span !->
 						Dom.style color: '#aaa', fontSize: '85%'
 						Dom.text " • "
@@ -421,12 +416,11 @@ renderPost = (post) !->
 				Dom.cls 'user-text'
 				Dom.userText post.get('text')||''
 
-
 			# url or image attachment
 			if url
 				renderAttachedUrl post
-			else if post.get 'photo'
-				key = post.get 'photo'
+			else if post.get 'image'
+				key = post.get 'image'
 				bgUrl = Photo.url key, 800
 				renderAttachedPhoto bgUrl
 
@@ -471,19 +465,16 @@ renderAttachedUrl = (post, isDraft) !->
 			padding: '6px'
 			borderRadius: '2px'
 			margin: if isDraft then '0 8px 8px 8px' else '12px 0 8px 0'
-		if key = post.get 'imageThumb'
-			bgUrl = Photo.url key, 200
-		else
-			bgUrl = post.get('image')
-
-		if bgUrl
+		if imgUrl = post.get('image')
+			if imgUrl.indexOf('/') < 0
+				imgUrl = Photo.url imgUrl, 200
 			Dom.div !->
 				Dom.style
 					borderRadius: '2px 0 0 2px'
 					width: '50px'
 					height: '50px'
 					margin: '2px 7px 0 2px'
-					backgroundImage: "url(#{bgUrl})"
+					backgroundImage: "url(#{imgUrl})"
 					backgroundSize: 'cover'
 					backgroundPosition: '50% 50%'
 
@@ -523,3 +514,4 @@ Dom.css
 		background: 'rgba(0, 0, 0, 0.1) !important'
 	'.user-text A':
 		color: '#aaa'
+
