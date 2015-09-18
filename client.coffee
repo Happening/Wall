@@ -240,10 +240,12 @@ renderWall = !->
 				Obs.observe !->
 					if pt = photoThumb.get()
 						# show photo
-						renderAttachedPhoto pt, 86, !->
-							Modal.confirm tr("Remove photo?"), !->
-								unclaimedPhoto.discard()
-								photoThumb.set null
+						Dom.div !->
+							Dom.style padding: '0 8px'
+							renderAttachedPhoto pt, !->
+								Modal.confirm tr("Remove photo?"), !->
+									unclaimedPhoto.discard()
+									photoThumb.set null
 					else if Db.personal.get('draft')
 						# show url snippet
 						draft = Db.personal.ref('draft')
@@ -273,6 +275,9 @@ renderWall = !->
 								Dom.style color: 'inherit', textTransform: 'none', fontWeight: 'normal'
 								Ui.spinner 12, !-> Dom.style marginRight: '6px'
 								Dom.text tr("Fetching..")
+								Dom.onTap !->
+									Modal.confirm null, tr("Stop fetching?"), !->
+										Server.sync 'draft', false
 							else
 								Dom.style color: Plugin.colors().highlight, textTransform: 'uppercase', fontWeight: 'bold'
 								Dom.text tr("Get link preview")
@@ -358,27 +363,25 @@ renderPost = (post) !->
 			# header with name, time, likes, comments and unreadbubble
 			Dom.div !->
 				Dom.style Box: 'bottom', Flex: 1 ,margin: '4px 0'
+
 				Dom.div !->
 					Dom.span !->
 						Dom.style color: (if Event.isNew(post.get('time')) then '#5b0' else 'inherit'), fontWeight: 'bold'
 						Dom.text Plugin.userName(post.get('by'))
 					Dom.span !->
-						Dom.style color: '#aaa', fontSize: '80%'
+						Dom.style color: '#aaa', fontSize: '85%'
 						Dom.text " • "
 						Time.deltaText post.get('time'), 'short'
+						Dom.text " • "
+						Social.renderLike
+							path: [post.key()]
+							id: 'post'
+							userId: post.get('by')
+							aboutWhat: tr("post")
+							minimal: true
 
 				Dom.div !->
 					Dom.style Flex: 1, textAlign: 'right', paddingRight: '2px'
-
-					if commentCnt = Db.shared.get('comments', post.key(), 'max')
-						Dom.span !->
-							Dom.style display: 'inline-block', fontSize: '85%', color: '#aaa'
-							Icon.render
-								data: 'comments'
-								size: 16
-								color: '#aaa'
-								style: {verticalAlign: 'bottom', margin: '1px 2px 0 1px'}
-							Dom.span commentCnt
 
 					likeCnt = 0
 					likeCnt++ for k,v of Db.shared.get('likes', post.key()+'-post') when +k and v>0
@@ -391,6 +394,24 @@ renderPost = (post) !->
 								color: '#aaa'
 								style: {verticalAlign: 'bottom', margin: '0 2px 1px 8px'}
 							Dom.span likeCnt
+
+					commentCnt = Db.shared.get('comments', post.key(), 'max')
+					if commentCnt
+						Dom.span !->
+							Dom.style display: 'inline-block', fontSize: '85%', color: '#aaa'
+							Icon.render
+								data: 'comments'
+								size: 16
+								color: '#aaa'
+								style: {verticalAlign: 'bottom', margin: '1px 2px 0 8px'}
+							Dom.span commentCnt
+					else
+						Dom.span !->
+							Dom.style fontSize: '85%', borderRadius: '2px', padding: '7px', margin: '-7px -4px -7px 3px', color: Plugin.colors().highlight
+							Dom.text tr("Reply")
+							Dom.onTap !-> Page.nav
+								0: post.key()
+								focus: true
 
 					# unread bubble
 					Event.renderBubble [post.key()], style: margin: '-3px -6px -3px 8px'
@@ -407,34 +428,34 @@ renderPost = (post) !->
 			else if post.get 'photo'
 				key = post.get 'photo'
 				bgUrl = Photo.url key, 800
-				renderAttachedPhoto bgUrl, 68
+				renderAttachedPhoto bgUrl
 
 		Dom.onTap !->
 			Page.nav post.key()
 
 
 
-renderAttachedPhoto = (bgUrl, margin, onTap) !->
+renderAttachedPhoto = (bgUrl, onTap) !->
 	vpWidth = Dom.viewport.get 'width'
 	vpHeight = Dom.viewport.get 'height'
-	width = vpWidth-margin
+	width = vpWidth
 	if width * (1/2) > vpHeight * (1/2.5)
 		height = 1/3 * vpHeight
 		width = (2/1) * height
-	else
-		height = (1/2) * width
 
 	Dom.div !->
-		Dom.style
-			borderRadius: '2px'
-			margin: if onTap then '0 8px 8px 8px' else '12px 0 8px 0'
-			width: Math.round(width)+'px'
-			height: Math.round(height)+'px'
-			backgroundImage: "url(#{bgUrl})"
-			backgroundSize: 'cover'
-			backgroundPosition: '50% 50%'
-		if onTap
-			Dom.onTap onTap
+		Dom.style maxWidth: width+'px'
+		Dom.div !->
+			Dom.style
+				borderRadius: '2px'
+				margin: if onTap then '0 0 8px 0' else '12px 0 8px 0'
+				width: '100%'
+				paddingBottom: '50%'
+				backgroundImage: "url(#{bgUrl})"
+				backgroundSize: 'cover'
+				backgroundPosition: '50% 50%'
+			if onTap
+				Dom.onTap onTap
 
 
 
@@ -452,6 +473,10 @@ renderAttachedUrl = (post, isDraft) !->
 			margin: if isDraft then '0 8px 8px 8px' else '12px 0 8px 0'
 		if key = post.get 'imageThumb'
 			bgUrl = Photo.url key, 200
+		else
+			bgUrl = post.get('image')
+
+		if bgUrl
 			Dom.div !->
 				Dom.style
 					borderRadius: '2px 0 0 2px'

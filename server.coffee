@@ -19,7 +19,8 @@ exports.client_add = (data) !->
 		# remove draft if there somehow is one
 		if Db.personal(userId).get('draft', 'title')
 			Db.personal(userId).remove 'draft'
-	else if data.text and text = data.text.trim()
+	else if data.text?
+		text = data.text.trim()
 		if post = Db.personal(userId).get('draft')
 			# there's a draft url attachment
 			post.text = text
