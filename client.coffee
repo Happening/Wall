@@ -164,7 +164,7 @@ renderWall = !->
 				Server.sync 'add',
 					text: text
 					photoguid: photoguid
-					onReady: -> addingPost.set false
+					onReady: !-> addingPost.set false
 
 				photoThumb.set null
 				addE.value ''

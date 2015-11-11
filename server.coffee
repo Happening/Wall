@@ -113,8 +113,10 @@ addPost = (post) !->
 	post.time = 0|(new Date()/1000)
 	
 	maxId = Db.shared.incr('maxId')
+	onReady = post.onReady
+	delete post.onReady
 	Db.shared.set maxId, post
-	post.onReady?.reply()
+	onReady.reply() if onReady
 
 	name = Plugin.userName(post.memberId)
 	notiText = post.text || post.title || post.url || '(photo)'
