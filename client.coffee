@@ -1,3 +1,4 @@
+Comments = require 'comments'
 Db = require 'db'
 Dom = require 'dom'
 Event = require 'event'
@@ -8,9 +9,8 @@ Modal = require 'modal'
 Obs = require 'obs'
 Page = require 'page'
 Photo = require 'photo'
-Plugin = require 'plugin'
+App = require 'app'
 Server = require 'server'
-Social = require 'social'
 Time = require 'time'
 Ui = require 'ui'
 Util = require 'util'
@@ -19,358 +19,233 @@ Util = require 'util'
 
 exports.render = !->
 	if postId = Page.state.get(0)
-		renderSinglePost postId, !!Page.state.get('focus')
+		renderSinglePost postId
 	else
 		renderWall()
 
 
-renderSinglePost = (postId, startFocused = false) !->
+renderSinglePost = (postId) !->
 	Page.setTitle tr("Post")
+
+	Comments.enable legacyStore: postId
+
 	post = Db.shared.ref(postId)
 	Event.showStar post.get('title')
-	if Plugin.userId() is post.get('memberId') or Plugin.userIsAdmin()
+	if App.userId() is post.get('memberId') or App.userIsAdmin()
 		Page.setActions
-			icon: 'trash'
+			icon: 'delete'
 			action: !->
 				Modal.confirm null, tr("Remove post?"), !->
 					Server.sync 'remove', postId, !->
 						Db.shared.remove(postId)
 					Page.back()
 
-	Dom.div !->
-		Dom.style margin: '-16px -8px 0', padding: '8px 0', backgroundColor: '#f8f8f8', borderBottom: '2px solid #ccc'
+	url = post.get('url')
+	image = post.get('image')
 
-		url = post.get('url')
-		image = post.get('image')
-
-		if !url and image
-			require('photoview').render key:image
-		else if url
-			Dom.div !->
-				Dom.style
-					Box: 'top'
-					Flex: 1
-					padding: '8px'
-					margin: '8px 8px 4px 8px'
-					backgroundColor: '#eee'
-					border: '1px solid #ddd'
-					borderBottom: '2px solid #ddd'
-					borderRadius: '2px'
-				Dom.cls 'link-box'
-
-				if image
-					Dom.img !->
-						Dom.style
-							maxWidth: '120px'
-							maxHeight: '200px'
-							margin: '2px 8px 4px 2px'
-						Dom.prop 'src', if image.indexOf('/') < 0 then Photo.url(image, 400) else image
-
-				Dom.div !->
-					Dom.style Flex: 1, fontSize: '90%'
-					Dom.h3 !->
-						Dom.style marginTop: 0
-						Dom.text post.get('title')
-
-					Dom.text post.get('description')
-
-					Dom.div !->
-						Dom.style
-							marginTop: '6px'
-							color: '#aaa'
-							fontSize: '90%'
-							whiteSpace: 'nowrap'
-							textTransform: 'uppercase'
-							fontWeight: 'normal'
-						Dom.text Util.getDomainFromUrl(url)
-
-				Dom.onTap !->
-					Plugin.openUrl url
-
-		if text = post.get('text')
-			Dom.div !->
-				Dom.style padding: '8px 8px 0 8px'
-				Dom.userText text
-
-
-		expanded = Obs.create false
-		byUserId = post.get('memberId')
+	if !url and image
+		require('photoview').render key:image
+	else if url
 		Dom.div !->
 			Dom.style
-				padding: '8px 8px 0 8px'
-				fontSize: '70%'
-				color: '#aaa'
-			Dom.text tr("Posted by %1", Plugin.userName(byUserId))
-			Dom.text " • "
-			Time.deltaText post.get('time')
+				Box: 'top'
+				Flex: 1
+				padding: '8px'
+				marginBottom: '8px'
+				backgroundColor: '#eee'
+				border: '1px solid #ddd'
+				borderBottom: '2px solid #ddd'
+				borderRadius: '2px'
+			Dom.cls 'link-box'
 
-			Dom.text " • "
-			expanded = Social.renderLike
-				path: [postId]
-				id: 'post'
-				userId: byUserId
-				aboutWhat: tr("post")
+			if image
+				Dom.img !->
+					Dom.style
+						maxWidth: '120px'
+						maxHeight: '200px'
+						marginRight: '8px'
+					Dom.prop 'src', if image.indexOf('/') < 0 then Photo.url(image, 400) else image
 
-		Obs.observe !->
-			if expanded.get()
+			Dom.div !->
+				Dom.style Flex: 1, fontSize: '90%'
+				Dom.h3 !->
+					Dom.style marginTop: 0
+					Dom.text post.get('title')
+
+				Dom.text post.get('description')
+
 				Dom.div !->
-					Dom.style margin: '0 8px 0 8px'
-					Social.renderLikeNames
-						path: [postId]
-						id: 'post'
-						userId: byUserId
+					Dom.style
+						marginTop: '6px'
+						color: '#aaa'
+						fontSize: '90%'
+						whiteSpace: 'nowrap'
+						textTransform: 'uppercase'
+						fontWeight: 'normal'
+					Dom.text Util.getDomainFromUrl(url)
 
+			Dom.onTap !->
+				App.openUrl url
+
+	if text = post.get('text')
+		Dom.div !->
+			if image
+				Dom.style marginTop: '12px'
+			Dom.userText text
+
+
+	expanded = Obs.create false
+	byUserId = post.get('memberId')
 	Dom.div !->
-		Dom.style margin: '0 -8px'
-		Social.renderComments
-			path: [postId]
-			startFocused: startFocused
+		Dom.style
+			paddingTop: '8px'
+			fontSize: '70%'
+			color: '#aaa'
+		Dom.text tr("Posted by %1", App.userName(byUserId))
+		Dom.text " • "
+		Time.deltaText post.get('time')
+
+		Dom.text " • "
+		expanded = Comments.renderLike
+			store: ["likes", postId+"-post"]
+			userId: byUserId
+			aboutWhat: tr("post")
+
+	Obs.observe !->
+		if expanded.get()
+			Dom.div !->
+				Dom.style marginTop: 0
+				Comments.renderLikeNames
+					store: ["likes", postId+"-post"]
+					userId: byUserId
 
 renderWall = !->
-	Dom.style backgroundColor: '#f8f8f8'
 	addingPost = Obs.create false
+	Comments.disable()
 
-	Dom.div !->
-		Dom.style Box: 'top', borderBottom: '1px solid #ebebeb', paddingBottom: '8px'
+	Ui.top !->
+		Dom.style Box: 'middle', marginBottom: 0
 
-		Ui.avatar Plugin.userAvatar(),
-			style: margin: '8px 0 0 0'
-			onTap: !-> Plugin.userInfo()
+		Ui.avatar App.userAvatar(),
+			style: marginRight: '12px'
+			onTap: !-> App.showMemberInfo(App.userId())
 
-		Dom.div !->
-			Dom.style Flex: 1, border: '1px solid #e0e0e0', borderBottom: '2px solid #e0e0e0', borderRadius: '2px', margin: '4px 4px 8px 8px', backgroundColor: '#fff'
-			addE = null
-			unclaimedPhoto = false
-			photoThumb = Obs.create false
-
-			containsUrl = Obs.create false
-			containsText = Obs.create false
-
-			save = !->
-				photoguid = false
-				val = addE.value().trim()
-				draft = Db.personal.get('draft')
-				if draft and unclaimedPhoto
-					unclaimedPhoto.discard() # draft takes precedence over photo
-				else if unclaimedPhoto
-					photoguid = unclaimedPhoto.claim()
-				return if !val and !photoguid and !draft # we need something..
-
-				newId = (0|Db.shared.get('maxId'))+1
-				Event.subscribe [newId] # TODO: subscribe serverside
+		Comments.renderInput
+			text: tr("New post...")
+			photo: true
+			flex: true
+			name: "commentText"
+			snipName: "commentSnip"
+			onSend: (msg, snip) !->
 				addingPost.set true
+				Server.sync 'add', {text: msg, snip: snip, onReady: !-> addingPost.set(false)}
 
-				text = Form.smileyToEmoji val
-				Server.sync 'add',
-					text: text
-					photoguid: photoguid
-					onReady: !-> addingPost.set false
-
-				photoThumb.set null
-				addE.value ''
-				containsText.set false
-				Form.blur()
-
-
-			# post-something interface
+	# Dom.div !->
+	# spinner when a new post is added
+	Obs.observe !->
+		maxId = 0|Db.shared.get 'maxId'
+		if addingPost.get()
 			Dom.div !->
-				unclaimedPhoto = Photo.unclaimed 'postPhoto'
-				if unclaimedPhoto
-					photoThumb.set unclaimedPhoto.thumb
-
+				Dom.style Box: 'middle', padding: '8px 0', borderBottom: '1px solid #ebebeb'
+				Ui.spinner 38
 				Dom.div !->
-					Dom.style padding: '6px', Box: 'bottom', minHeight: '36px'
+					Dom.style paddingLeft: '16px', color: '#aaa', Flex: 1
+					Dom.text tr("Adding...")
 
-					addE = Form.text
-						simple: true
-						text: tr("What's happening?")
-						onChange: (v) !->
-							v = v?.trim()||''
-							if v
-								containsText.set v
-								urls = Util.getUrlsFromText v
-								containsUrl.set !!urls.length
-							else
-								containsText.set false
-								containsUrl.set false
-						inScope: !->
-							Dom.style
-								Flex: 1
-								display: 'block'
-								fontSize: '100%'
-								paddingBottom: '2px'
-								border: 'none'
-								width: '100%'
-						onContent: (content) !->
-							content = content.trim()
-							url = Util.getUrlsFromText(content)[0]
+	postCnt = 0
+	empty = Obs.create(true)
 
-							# if it's one url in text, we'll only show an url preview
-							if url==content
-								Server.sync 'draft', url
-							else
-								addE.value content
+	if fv = Page.state.get('firstV')
+		firstV = Obs.create(fv)
+	else
+		firstV = Obs.create(-Math.max(1, (Db.shared.peek('maxId')||0)-20))
+	lastV = Obs.create()
+		# firstV and lastV are inversed when they go into Loglist
+	Obs.observe !->
+		lastV.set -(Db.shared.get('maxId')||0)
 
-					Obs.observe !->
-						showPost = containsText.get() or photoThumb.get() or Db.personal.get('draft')
-						# post button
-						Ui.button !->
-							Dom.style display: (if showPost then 'inline-block' else 'none'), margin: '3px 2px'
-							Dom.text tr("Post")
-						, save
+	# list of all posts
+	Loglist.render lastV, firstV, (num) !->
+		num = -num
+		post = Db.shared.ref(num)
+		return if !post.get('time')
+		empty.set(!++postCnt)
 
-						# camera icon
-						Icon.render
-							style:
-								padding: '12px'
-								margin: '-6px'
-								display: (if showPost then 'none' else 'inline-block')
-							data: 'camera'
-							color: '#aaa'
-							onTap: !->
-								Photo.pick null, null, 'postPhoto'
-
-					Obs.onClean !->
-						if unclaimedPhoto
-							unclaimedPhoto.discard()
-
-				Obs.observe !->
-					if pt = photoThumb.get()
-						# show photo
-						Dom.div !->
-							Dom.style padding: '0 8px'
-							renderAttachedPhoto pt, !->
-								Modal.confirm tr("Remove photo?"), !->
-									unclaimedPhoto.discard()
-									photoThumb.set null
-					else if Db.personal.get('draft')
-						# show url snippet
-						draft = Db.personal.ref('draft')
-						renderAttachedUrl draft, true
-					else
-						# show snippet placeholder (tap to get preview)
-						Dom.div !->
-							Dom.cls 'link-box'
-							draft = Db.personal.get('draft')
-							Dom.style
-								Box: 'middle center'
-								display: if (draft is 0 or containsUrl.get()) and !photoThumb.get() then '' else 'none'
-								height: '40px'
-								fontSize: '80%'
-								backgroundColor: '#eee'
-								border: '1px solid #ddd'
-								borderBottom: '2px solid #ddd'
-								margin: '0 8px 8px 8px'
-								borderRadius: '2px'
-							if draft is 0
-								Dom.style color: 'inherit', textTransform: 'none', fontWeight: 'normal'
-								Ui.spinner 12, !-> Dom.style marginRight: '6px'
-								Dom.text tr("Fetching..")
-								Dom.onTap !->
-									Modal.confirm null, tr("Stop fetching?"), !->
-										Server.sync 'draft', false
-							else
-								Dom.style color: Plugin.colors().highlight, textTransform: 'uppercase', fontWeight: 'bold'
-								Dom.text tr("Get link preview")
-								Dom.onTap !->
-									text = addE.value().trim()
-									url = Util.getUrlsFromText(text)[0]
-									Server.sync 'draft', url, !->
-										Db.personal.set 'draft', 0 # in progress
-									if url==text
-										addE.value ''
-
-
-
-	Dom.div !->
-		# spinner when a new post is added
-		Obs.observe !->
-			maxId = 0|Db.shared.get 'maxId'
-			if addingPost.get()
-				Dom.div !->
-					Dom.style Box: 'middle', padding: '8px 0', borderBottom: '1px solid #ebebeb'
-					Ui.spinner 38
-					Dom.div !->
-						Dom.style paddingLeft: '8px', color: '#aaa', Flex: 1
-						Dom.text tr("Adding...")
-
-		postCnt = 0
-		empty = Obs.create(true)
-
-		if fv = Page.state.get('firstV')
-			firstV = Obs.create(fv)
+		if post.get('s')
+			c = post.get()
+			c.id = post.key()
+			renderNotice c
 		else
-			firstV = Obs.create(-Math.max(1, (Db.shared.peek('maxId')||0)-20))
-		lastV = Obs.create()
-			# firstV and lastV are inversed when they go into Loglist
-		Obs.observe !->
-			lastV.set -(Db.shared.get('maxId')||0)
-
-		# list of all posts
-		Loglist.render lastV, firstV, (num) !->
-			num = -num
-			post = Db.shared.ref(num)
-			return if !post.get('time')
-			empty.set(!++postCnt)
-
 			renderPost post
 
-			Obs.onClean !->
-				empty.set(!--postCnt)
+		Obs.onClean !->
+			empty.set(!--postCnt)
 
+	Dom.div !->
+		if firstV.get()==-1
+			Dom.style display: 'none'
+			return
+		Dom.style padding: '4px', textAlign: 'center'
+
+		Ui.button tr("Earlier posts"), !->
+			fv = Math.min(-1, firstV.peek()+20)
+			firstV.set fv
+			Page.state.set('firstV', fv)
+
+	Obs.observe !->
+		if empty.get()
+			Ui.item !->
+				Dom.style
+					Box: 'middle center'
+					color: '#bbb'
+				Dom.text tr("Nothing has been posted yet")
+
+renderNotice = (c) !->
+	Ui.item !->
+		Dom.style paddingTop: '2px', paddingBottom: '2px', minHeight: 0
 		Dom.div !->
-			if firstV.get()==-1
-				Dom.style display: 'none'
-				return
-			Dom.style padding: '4px', textAlign: 'center'
-
-			Ui.button tr("Earlier posts"), !->
-				fv = Math.min(-1, firstV.peek()+20)
-				firstV.set fv
-				Page.state.set('firstV', fv)
-
-		Obs.observe !->
-			if empty.get()
-				Ui.item !->
-					Dom.style
-						padding: '12px 0'
-						Box: 'middle center'
-						color: '#bbb'
-					Dom.text tr("Nothing has been posted yet")
+			Dom.style margin: '6px 0 6px 52px', fontSize: '70%'
+			Dom.span !->
+				Dom.style color: '#999'
+				Time.deltaText c.time
+				Dom.text " • "
+			Dom.text Comments.getUserEventText c
+		if aboutId = c.a
+			Dom.onTap !-> App.showMemberInfo aboutId
 
 
 renderPost = (post) !->
-	Dom.div !->
-		Dom.style Box: 'top', padding: 0, borderBottom: '1px solid #ebebeb'
+	Ui.item !->
+		Dom.style Box: 'top'
 
 		url = post.get('url')
 		userId = post.get 'memberId'
 
 		# avatar of the user who posted this
-		Ui.avatar Plugin.userAvatar(userId),
-			style: margin: '8px 0 0 0'
-			onTap: !-> Plugin.userInfo(userId)
+		Ui.avatar App.userAvatar(userId),
+			style: margin: '8px 12px 0 0'
+			onTap: !-> App.showMemberInfo(userId)
 
 		# main box showing content of the post
 		Dom.div !->
-			Dom.style padding: '4px 4px 8px 8px', Flex: 1
+			Dom.style Flex: 1
 
 			# header with name, time, likes, comments and unreadbubble
 			Dom.div !->
-				Dom.style Box: 'bottom', Flex: 1 ,margin: '4px 0'
+				Dom.style Box: 'bottom', Flex: 1, margin: '4px 0'
 
 				Dom.div !->
+					Dom.style whiteSpace: 'nowrap'
 					Dom.span !->
 						Dom.style color: (if Event.isNew(post.get('time')) then '#5b0' else 'inherit'), fontWeight: 'bold'
-						Dom.text Plugin.userName(post.get('memberId'))
+						Dom.text App.userName(post.get('memberId'))
 					Dom.span !->
 						Dom.style color: '#aaa', fontSize: '85%'
 						Dom.text " • "
 						Time.deltaText post.get('time'), 'short'
 						Dom.text " • "
-						Social.renderLike
-							path: [post.key()]
-							id: 'post'
+						Comments.renderLike
+							store: ['likes', post.key()+'-post']
 							userId: post.get('by')
 							aboutWhat: tr("post")
 							minimal: true
@@ -402,11 +277,9 @@ renderPost = (post) !->
 							Dom.span commentCnt
 					else
 						Dom.span !->
-							Dom.style fontSize: '85%', borderRadius: '2px', padding: '7px', margin: '-7px -4px -7px 3px', color: Plugin.colors().highlight
+							Dom.style fontSize: '85%', padding: '5px 6px', margin: '-3px', borderRadius: '2px', color: App.colors().highlight
 							Dom.text tr("Reply")
-							Dom.onTap !-> Page.nav
-								0: post.key()
-								focus: true
+							Dom.onTap !-> Page.nav [post.key()]
 
 					# unread bubble
 					Event.renderBubble [post.key()], style: margin: '-3px -6px -3px 8px'
@@ -430,8 +303,8 @@ renderPost = (post) !->
 
 
 renderAttachedPhoto = (bgUrl, onTap) !->
-	vpWidth = Dom.viewport.get 'width'
-	vpHeight = Dom.viewport.get 'height'
+	vpWidth = Page.width()
+	vpHeight = Page.height()
 	width = vpWidth
 	if width * (1/2) > vpHeight * (1/2.5)
 		height = 1/3 * vpHeight
@@ -507,11 +380,10 @@ renderAttachedUrl = (post, isDraft) !->
 					Dom.text Util.getDomainFromUrl(url)
 
 		Dom.onTap !->
-			Plugin.openUrl url
+			App.openUrl url
 
 Dom.css
 	'.link-box.tap':
 		background: 'rgba(0, 0, 0, 0.1) !important'
 	'.user-text A':
 		color: '#aaa'
-

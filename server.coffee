@@ -3,9 +3,10 @@ Event = require 'event'
 Http = require 'http'
 Metatags = require 'metatags'
 Photo = require 'photo'
-Plugin = require 'plugin'
+App = require 'app'
 Subscription = require 'subscription'
 Util = require 'util'
+{tr} = require 'i18n'
 
 exports.onUpgrade = !->
 	all = Db.shared.get()
@@ -19,17 +20,13 @@ exports.onUpgrade = !->
 			delete data.by
 	Db.shared.set all
 
-exports.getTitle = -> # we implemented our own title input
-
-
-	
 exports.client_draft = (url) !->
 	personal = Db.personal()
 	if url
 		personal.set 'draft', 0
 		Http.get
 			url: url
-			cb: ['handleDraftUrlPage', Plugin.memberId(), url]
+			cb: ['handleDraftUrlPage', App.userId(), url]
 	else
 		personal.remove 'draft'
 
@@ -40,38 +37,21 @@ exports.handleDraftUrlPage = (memberId, url, resp) !->
 	else
 		Db.personal(memberId).remove 'draft'
 
-
-
-
 exports.client_add = (post) !->
 	log '_add', JSON.stringify(post)
-	post.memberId = Plugin.memberId()
-	text = post.text = post.text.trim() if post.text
+	post.memberId = App.userId()
+	snip = post.snip
+	post.snip = null
 
-	personal = Db.personal()
-	if draft = personal.get('draft')
-		personal.remove 'draft'
-
-	if guid = post.photoguid
-		# there's a photo, don't interpret any urls
-		delete post.photoguid
+	if snip.type is 'photo'
 		Photo.claim
-			guid: guid
+			guid: snip.upload
 			cb: ['handlePhoto', post]
 		return
 
-	if draft
-		post[k] = v for k,v of draft
-		addPost post
-		return
-
-	if !text
-		post.onReady?.reply()
-		return
-
-	# see if there are any urls
-	if url = Util.getUrlsFromText(text)[0]
-		if url==text # share only the url, no text
+	if snip.type is 'link'
+		url = snip.url
+		if url==post.text # share only the url, no text
 			post.text = null
 		post.url = url
 		Http.get
@@ -80,7 +60,6 @@ exports.client_add = (post) !->
 		return
 
 	addPost post
-
 
 exports.handlePhoto = (post, photoInfo) !->
 	post.image = photoInfo?.key
@@ -118,16 +97,24 @@ addPost = (post) !->
 	Db.shared.set maxId, post
 	onReady.reply() if onReady
 
-	name = Plugin.userName(post.memberId)
+	name = App.userName(post.memberId)
 	notiText = post.text || post.title || post.url || '(photo)'
 	Event.create
 		text: "#{name} posted: #{notiText}"
 		sender: post.memberId
 
 exports.client_remove = (id) !->
-	return if Plugin.memberId() isnt Db.shared.get(id, 'memberId') and !Plugin.userIsAdmin()
+	return if App.userId() isnt Db.shared.get(id, 'memberId') and !App.userIsAdmin()
 
 	Photo.remove image if (image = Db.shared.get(id, 'image')) and image.indexOf('/') < 0
 
 	Db.shared.remove(id)
+
+
+exports.onUserEvent = (c) ->
+	maxId = Db.shared.incr('maxId')
+	Db.shared.set maxId, {s:c.s, a:c.a, u:c.u, c:c.c, time:0|App.time()}
+	c.path = '/' # /?cs doesn't make sense here
+	c.store = false # we've done the writing ourselves
+	c
 

@@ -1,8 +1,8 @@
 Xml = require 'xml'
 
-# title, description, image, url
+# title, description, image, url, plus any 'og:' tags
 exports.fromHtml = (html) ->
-	tree = Xml.decode(html)
+	tree = Xml.decode html
 	result = {}
 	
 	if head = Xml.search(tree, '*. head')[0]

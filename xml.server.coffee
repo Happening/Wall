@@ -136,7 +136,7 @@ decodeEntities = (string) ->
 # In its most basic form `terms` can be an array of functions. When the
 # functions match a parent-child chain, the deepest child will be part of
 # the result array. In case one wants an item to match zero or more times,
-# the function can be proceeded by a '*' string.
+# the function can be preceeded by a '*' string.
 # Example:
 # ```coffeescript
 # matchAny = (node) -> true
